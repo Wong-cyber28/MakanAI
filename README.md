@@ -1,56 +1,32 @@
-# Welcome to your Expo app 👋
+# MakanAI 🥗
+A Body-Neutral, AI-Powered Nutrition Tracker designed to eliminate diet anxiety while providing precise caloric insights. 
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+## 💡 Core Philosophy
+Traditional calorie counters rely on tedious manual entry and often use aggressive UI elements (like red warning alerts) that can trigger body image anxiety. MakanAI reimagines dietary tracking:
+- **Zero-Friction Logging**: Powered by Gemini Vision API to instantly analyze meals from photos.
+- **Body-Neutral UI**: Objective data visualization without judgment. No red alerts, no guilt-tripping—just pure, actionable data.
+- **Localized for SEA**: Optimized to recognize complex mixed dishes (e.g., Nasi Lemak, Mixed Rice) that traditional Western databases fail to identify.
 
-## Get started
+## 🛠 Tech Stack
+- **Frontend**: React Native, Expo, React Navigation
+- **Backend & Auth**: Supabase (PostgreSQL, Edge Functions)
+- **AI Engine**: Google Gemini Vision API
+- **Data Visualization**: react-native-gifted-charts
+- **Localization (i18n)**: English, Simplified Chinese, Malay, Korean
 
-1. Install dependencies
+## 🚧 Technical Challenges Overcome
 
-   ```bash
-   npm install
-   ```
+### 1. Combating Asynchronous Race Conditions
+**Challenge**: Rapidly navigating between dates caused old network requests to overwrite newer ones, resulting in UI data flickering and ghost images.
+**Solution**: Implemented robust cleanup functions using boolean flags (`ignore` pattern) inside React's `useEffect` to safely abort stale Supabase fetches, ensuring the UI always reflects the strictly requested date.
 
-2. Start the app
+### 2. Edge-Overflow in High-Density Data Visualization
+**Challenge**: In the 30-day (Month) history view, interactive tooltips on the outer edges were clipped by the screen boundaries, and standard pointer interactions were too erratic on narrow touch targets.
+**Solution**: Deprecated the generic pointer configuration in favor of explicit `onPress` state management. Engineered a dynamic `topLabelComponent` that calculates the index of the tapped bar and applies directional `marginLeft` compensation to keep tooltips perfectly centered and on-screen.
 
-   ```bash
-   npx expo start
-   ```
+### 3. AI Hallucination & Data Integrity Guardrails
+**Challenge**: Users uploading non-food items (e.g., scenery, objects) would corrupt the database if the AI attempted to force a nutritional breakdown.
+**Solution**: Engineered a strict pre-validation layer within the AI parsing logic. If Gemini flags the image as `isFood: false`, the app aggressively aborts the Supabase `.insert()` operation and gracefully alerts the user, maintaining absolute database purity.
 
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
-```
-
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
-
-### Other setup steps
-
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
-
-## Learn more
-
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+## 🚀 Getting Started
+(You can leave instructions here on how to run the app via Expo Go for reviewers).
