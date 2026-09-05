@@ -25,11 +25,19 @@ import {
 
 const AVATAR_URI = 'https://ui-avatars.com/api/?name=Wong+Ying+Boy&background=random';
 const SUPPORT_EMAIL = 'makanai.app@gmail.com';
+const LEGAL_URL =
+  'https://serious-ringer-b04.notion.site/Privacy-Policy-for-MakanAI-3d2f889ea53a801b820cea41c275d6ee';
 
 function openSupportMail(subject: string) {
   const url = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(subject)}`;
   void Linking.openURL(url).catch(() => {
     Alert.alert(i18n.t('cannotOpenMail'), i18n.t('setMailApp'));
+  });
+}
+
+function openLegalPage() {
+  void Linking.openURL(LEGAL_URL).catch(() => {
+    Alert.alert(i18n.t('cannotOpenMail'), LEGAL_URL);
   });
 }
 
@@ -126,15 +134,8 @@ export default function SettingsScreen() {
           label={t('supportEmail')}
           onPress={() => openSupportMail('Support: MakanAI')}
         />
-        <LinkRow
-          label={t('termsAndConditions')}
-          onPress={() => router.push('/settings/terms')}
-        />
-        <LinkRow
-          last
-          label={t('privacyPolicy')}
-          onPress={() => router.push('/settings/privacy')}
-        />
+        <LinkRow label={t('termsAndConditions')} onPress={openLegalPage} />
+        <LinkRow last label={t('privacyPolicy')} onPress={openLegalPage} />
       </SettingsSection>
 
       <SettingsSection title={t('accountActions')}>
