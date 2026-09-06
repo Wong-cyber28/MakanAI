@@ -96,7 +96,8 @@ export function OptionPicker({
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.modalRoot}>
         <Pressable style={styles.modalBackdrop} onPress={onClose} />
-        <View style={styles.modalCard}>
+        <View style={styles.modalCardLift}>
+          <View style={styles.modalCard}>
           <Text style={styles.modalTitle}>{title}</Text>
           {options.map((option, index) => {
             const active = option === selected;
@@ -119,6 +120,7 @@ export function OptionPicker({
               </Pressable>
             );
           })}
+          </View>
         </View>
       </View>
     </Modal>
@@ -247,14 +249,27 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     paddingHorizontal: 28,
+    zIndex: 20,
   },
   modalBackdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(28, 25, 22, 0.28)',
+    backgroundColor: 'rgba(28, 25, 22, 0.36)',
+    zIndex: 20,
+  },
+  modalCardLift: {
+    zIndex: 30,
+    borderRadius: 16,
+    shadowColor: '#1C1916',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.22,
+    shadowRadius: 24,
+    elevation: 16,
   },
   modalCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#E8E2D8',
     overflow: 'hidden',
     paddingTop: 8,
   },
@@ -266,11 +281,12 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   modalRow: {
-    minHeight: 52,
+    minHeight: 56,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 18,
+    paddingVertical: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#EFEAE3',
   },

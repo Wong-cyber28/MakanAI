@@ -1,5 +1,6 @@
-import BottomSheet, {
+import {
   BottomSheetBackdrop,
+  BottomSheetModal,
   BottomSheetScrollView,
   type BottomSheetBackdropProps,
 } from '@gorhom/bottom-sheet';
@@ -24,16 +25,16 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ViewShot, { type ViewShotRef } from 'react-native-view-shot';
 
 import { PANDAN, WARM_BEIGE } from '@/constants/brand';
-import i18n, { getDateLocale } from '@/locales/i18n';
 import { useUploadTask } from '@/context/UploadTaskContext';
 import { DEFAULT_NUTRITION_TARGETS, loadNutritionTargets } from '@/lib/nutrition-targets';
+import i18n, { getDateLocale } from '@/locales/i18n';
 import { supabase } from '../../supabase';
 import type { MealIngredient, MealLog } from '../../types/supabase';
+
 
 const CARD_SHADOW = {
   shadowColor: '#1C1916',
@@ -393,7 +394,7 @@ export default function HomeScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [isFetching, setIsFetching] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
-  const mealSheetRef = useRef<BottomSheet>(null);
+  const mealSheetRef = useRef<BottomSheetModal>(null);
   const viewShotRef = useRef<ViewShotRef>(null);
   const wasProcessingRef = useRef(false);
   const { isProcessing, processProgress, processingImage } = useUploadTask();
@@ -418,10 +419,10 @@ export default function HomeScreen() {
     []
   );
 
-  const openMealSheet = useCallback((meal: MealLog) => {
+  const openMealDetails = useCallback((meal: MealLog) => {
     setSelectedMeal(meal);
     requestAnimationFrame(() => {
-      mealSheetRef.current?.snapToIndex(0);
+      mealSheetRef.current?.present();
     });
   }, []);
 
@@ -459,6 +460,21 @@ export default function HomeScreen() {
     const clamped = startOfLocalDay(next) > today ? today : startOfLocalDay(next);
     setIsFetching(true);
     setSelectedDate(clamped);
+  }, []);
+
+  const goToPreviousDay = useCallback(() => {
+    commitSelectedDate(shiftDay(selectedDate, -1));
+  }, [commitSelectedDate, selectedDate]);
+
+  const goToNextDay = useCallback(() => {
+    if (isSameLocalDay(selectedDate, new Date())) {
+      return;
+    }
+    commitSelectedDate(shiftDay(selectedDate, 1));
+  }, [commitSelectedDate, selectedDate]);
+
+  const openDatePicker = useCallback(() => {
+    setShowDatePicker(true);
   }, []);
 
   const handleHomeDateChange = useCallback(
@@ -568,9 +584,10 @@ export default function HomeScreen() {
   const canGoForward = !viewingToday;
 
   return (
-    <GestureHandlerRootView style={styles.screen}>
+    <View style={styles.screen}>
       <StatusBar style="dark" />
       <SectionList
+        style={styles.list}
         sections={isFetching ? [] : mealSections}
         keyExtractor={(item, index) => item.id ?? `${item.created_at}-${index}`}
         contentContainerStyle={[
@@ -587,19 +604,19 @@ export default function HomeScreen() {
           <View>
             <View style={styles.dateNav}>
               <Pressable
-                onPress={() => commitSelectedDate(shiftDay(selectedDate, -1))}
+                onPress={goToPreviousDay}
                 hitSlop={12}
                 style={({ pressed }) => [styles.dateNavArrow, pressed && styles.pressed]}>
                 <Text style={styles.dateNavArrowText}>‹</Text>
               </Pressable>
               <Pressable
-                onPress={() => setShowDatePicker(true)}
+                onPress={openDatePicker}
                 style={({ pressed }) => [styles.dateNavCenter, pressed && styles.pressed]}>
                 <Text style={styles.dateNavLabel}>{formatHomeDateLabel(selectedDate)}</Text>
               </Pressable>
               <Pressable
                 disabled={!canGoForward}
-                onPress={() => commitSelectedDate(shiftDay(selectedDate, 1))}
+                onPress={goToNextDay}
                 hitSlop={12}
                 style={({ pressed }) => [styles.dateNavArrow, pressed && styles.pressed]}>
                 <Text style={[styles.dateNavArrowText, !canGoForward && styles.dateNavArrowMuted]}>
@@ -701,7 +718,7 @@ export default function HomeScreen() {
 
           return (
             <Pressable
-              onPress={() => openMealSheet(item)}
+              onPress={() => openMealDetails(item)}
               style={({ pressed }) => [styles.mealCard, pressed && styles.pressed]}>
               <View style={styles.mealPhotoWrap}>
                 <MealPhoto
@@ -762,13 +779,13 @@ export default function HomeScreen() {
         }
       />
 
-      <BottomSheet
+      <BottomSheetModal
         ref={mealSheetRef}
-        index={-1}
         snapPoints={snapPoints}
         enableDynamicSizing={false}
         enablePanDownToClose
         onChange={handleSheetChange}
+        onDismiss={() => setSelectedMeal(null)}
         backdropComponent={renderBackdrop}
         backgroundStyle={styles.sheetBackground}
         handleIndicatorStyle={styles.sheetHandle}>
@@ -780,8 +797,10 @@ export default function HomeScreen() {
           showsVerticalScrollIndicator={false}>
           {selectedMeal && selectedMacros ? (
             <>
+              {/* @ts-ignore */}
               <ViewShot
                 ref={viewShotRef}
+                // @ts-ignore
                 collapsable={false}
                 options={{ format: 'jpg', quality: 0.9 }}
                 style={styles.shareCard}>
@@ -860,7 +879,7 @@ export default function HomeScreen() {
             </>
           ) : null}
         </BottomSheetScrollView>
-      </BottomSheet>
+      </BottomSheetModal>
 
       {showDatePicker ? (
         Platform.OS === 'ios' ? (
@@ -888,7 +907,7 @@ export default function HomeScreen() {
           />
         )
       ) : null}
-    </GestureHandlerRootView>
+    </View>
   );
 }
 
@@ -896,6 +915,9 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: WARM_BEIGE,
+  },
+  list: {
+    flex: 1,
   },
   listContent: {
     paddingHorizontal: 20,
@@ -1104,7 +1126,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#EDE6DC',
   },
   processingPhotoMask: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(28, 24, 20, 0.38)',
   },
   processingBody: {

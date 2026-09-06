@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import i18n, { type LanguageDetectorAsyncModule } from 'i18next';
 import { initReactI18next } from 'react-i18next';
 
-export const LANGUAGE_STORAGE_KEY = 'user-language';
+export const LANGUAGE_STORAGE_KEY = '@user_language';
 
 export const APP_LANGUAGES = [
   { code: 'en', label: 'English' },
@@ -13,13 +13,18 @@ export const APP_LANGUAGES = [
 
 export type AppLanguage = (typeof APP_LANGUAGES)[number]['code'];
 
+export const DEFAULT_LANGUAGE: AppLanguage = 'en';
+
 export function isAppLanguage(value: string): value is AppLanguage {
   return APP_LANGUAGES.some((language) => language.code === value);
 }
 
 export function getAppLanguage(lng = i18n.resolvedLanguage ?? i18n.language): AppLanguage {
+  if (!lng) {
+    return DEFAULT_LANGUAGE;
+  }
   const code = lng.split('-')[0];
-  return isAppLanguage(code) ? code : 'en';
+  return isAppLanguage(code) ? code : DEFAULT_LANGUAGE;
 }
 
 export function getLanguageLabel(lng?: string) {
@@ -41,29 +46,35 @@ export function getDateLocale(lng = i18n.resolvedLanguage ?? i18n.language) {
   return 'en-US';
 }
 
+function parseSavedLanguage(value: string | null): AppLanguage | null {
+  if (!value) {
+    return null;
+  }
+  const code = value.split('-')[0];
+  return isAppLanguage(code) ? code : null;
+}
+
+async function readSavedLanguage(): Promise<AppLanguage> {
+  try {
+    const saved = await AsyncStorage.getItem(LANGUAGE_STORAGE_KEY);
+    return parseSavedLanguage(saved) ?? DEFAULT_LANGUAGE;
+  } catch {
+    return DEFAULT_LANGUAGE;
+  }
+}
+
 const languageDetector: LanguageDetectorAsyncModule = {
   type: 'languageDetector',
   async: true,
   detect: (callback) => {
-    void (async () => {
-      try {
-        const saved = await AsyncStorage.getItem(LANGUAGE_STORAGE_KEY);
-        if (saved && isAppLanguage(saved)) {
-          callback(saved);
-          return;
-        }
-      } catch {
-        // Fall back to English when storage is unavailable.
-      }
-      callback('en');
-    })();
-  },
-  init: () => {},
-  cacheUserLanguage: (lng) => {
-    void AsyncStorage.setItem(LANGUAGE_STORAGE_KEY, lng).catch(() => {
-      // Ignore persistence failures; in-memory language still updates.
+    void readSavedLanguage().then((language) => {
+      callback(language);
     });
   },
+  init: () => {},
+  // i18next calls this on init too, including device-locale matches.
+  // Only persist when the user picks a language in Settings.
+  cacheUserLanguage: () => {},
 };
 
 const resources = {
@@ -169,10 +180,17 @@ const resources = {
       captureFailedHint: 'No image data came through. Please try again.',
       cameraBusy: 'The camera is busy. Please try again in a moment.',
       takePhoto: 'Take photo',
+      addMeal: 'Add a meal',
+      takeAPhoto: 'Take a Photo',
+      chooseFromGallery: 'Choose from Gallery',
+      galleryPermissionHint: 'Allow photo access so you can log a meal from your gallery.',
       notFoodTitle: 'Hmm, that doesn’t look like food 🥗',
       notFoodBody: 'Please snap a clear picture of your meal so MakanAI can analyze it accurately.',
       gotIt: 'Got it',
       mealNotSaved: 'This meal wasn’t saved',
+      changeProfilePhoto: 'Change profile photo',
+      photoPermissionTitle: 'Photo access needed',
+      photoPermissionHint: 'Allow photo access so you can choose a new profile picture.',
     },
   },
   zh: {
@@ -277,10 +295,17 @@ const resources = {
       captureFailedHint: '没有拿到图片数据，请再试一次。',
       cameraBusy: '相机暂时无法拍照，请稍后再试。',
       takePhoto: '拍照',
+      addMeal: '记录一餐',
+      takeAPhoto: '拍照',
+      chooseFromGallery: '从相册选择',
+      galleryPermissionHint: '允许访问相册后，就可以从相册记录餐食。',
       notFoodTitle: '嗯，这看起来不太像食物 🥗',
       notFoodBody: '请拍一张清晰的餐食照片，MakanAI 才能准确分析。',
       gotIt: '知道了',
       mealNotSaved: '这一餐没有记上',
+      changeProfilePhoto: '更换头像',
+      photoPermissionTitle: '需要相册权限',
+      photoPermissionHint: '允许访问相册后，就可以选择新的头像。',
     },
   },
   ms: {
@@ -385,10 +410,17 @@ const resources = {
       captureFailedHint: 'Tiada data imej diterima. Sila cuba lagi.',
       cameraBusy: 'Kamera sedang sibuk. Sila cuba sebentar lagi.',
       takePhoto: 'Ambil gambar',
+      addMeal: 'Tambah hidangan',
+      takeAPhoto: 'Ambil gambar',
+      chooseFromGallery: 'Pilih dari galeri',
+      galleryPermissionHint: 'Benarkan akses foto supaya anda boleh log hidangan dari galeri.',
       notFoodTitle: 'Hmm, itu nampak bukan makanan 🥗',
       notFoodBody: 'Sila ambil gambar hidangan yang jelas supaya MakanAI dapat menganalisisnya dengan tepat.',
       gotIt: 'Faham',
       mealNotSaved: 'Hidangan ini tidak disimpan',
+      changeProfilePhoto: 'Tukar foto profil',
+      photoPermissionTitle: 'Akses foto diperlukan',
+      photoPermissionHint: 'Benarkan akses foto supaya anda boleh pilih gambar profil baharu.',
     },
   },
   ko: {
@@ -493,10 +525,17 @@ const resources = {
       captureFailedHint: '이미지 데이터를 받지 못했어요. 다시 시도해 주세요.',
       cameraBusy: '카메라가 잠시 사용할 수 없어요. 잠시 후 다시 시도해 주세요.',
       takePhoto: '사진 찍기',
+      addMeal: '식사 추가',
+      takeAPhoto: '사진 찍기',
+      chooseFromGallery: '갤러리에서 선택',
+      galleryPermissionHint: '갤러리에서 식사를 기록하려면 사진 접근을 허용해 주세요.',
       notFoodTitle: '음, 음식처럼 보이지 않아요 🥗',
       notFoodBody: '식사를 또렷하게 찍어 주시면 MakanAI가 더 정확하게 분석할 수 있어요.',
       gotIt: '알겠어요',
       mealNotSaved: '이 식사는 저장되지 않았어요',
+      changeProfilePhoto: '프로필 사진 변경',
+      photoPermissionTitle: '사진 권한이 필요해요',
+      photoPermissionHint: '새 프로필 사진을 고르려면 사진 접근을 허용해 주세요.',
     },
   },
 } as const;
@@ -505,8 +544,10 @@ void i18n
   .use(languageDetector)
   .use(initReactI18next)
   .init({
-    fallbackLng: 'en',
+    fallbackLng: DEFAULT_LANGUAGE,
     supportedLngs: APP_LANGUAGES.map((language) => language.code),
+    nonExplicitSupportedLngs: false,
+    load: 'currentOnly',
     resources,
     interpolation: {
       escapeValue: false,

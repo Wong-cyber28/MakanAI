@@ -1,5 +1,5 @@
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -21,6 +21,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PANDAN } from '@/constants/brand';
 import { useUploadTask } from '@/context/UploadTaskContext';
+import { consumePendingMealIntent } from '@/lib/pending-meal-photo';
 
 type CapturedPhoto = {
   uri: string;
@@ -46,6 +47,30 @@ export default function CameraScreen() {
   const [extraPrompt, setExtraPrompt] = useState('');
   const { startProcessingTask } = useUploadTask();
   const insets = useSafeAreaInsets();
+
+  useFocusEffect(
+    useCallback(() => {
+      const pending = consumePendingMealIntent();
+      if (!pending) {
+        return;
+      }
+
+      capturingRef.current = false;
+      sendingRef.current = false;
+      setIsCapturing(false);
+      setExtraPrompt('');
+
+      if (pending.kind === 'photo') {
+        setCapturedPhoto({
+          uri: pending.uri,
+          base64: pending.base64,
+        });
+        return;
+      }
+
+      setCapturedPhoto(null);
+    }, [])
+  );
 
   const goHome = useCallback(() => {
     router.replace('/');
@@ -113,38 +138,11 @@ export default function CameraScreen() {
     }
   }, [t]);
 
-  if (!permission) {
-    return (
-      <View style={styles.fallback}>
-        <StatusBar style="light" />
-        <ActivityIndicator color="#ffffff" />
-      </View>
-    );
-  }
-
-  if (!permission.granted) {
-    return (
-      <View style={styles.fallback}>
-        <StatusBar style="light" />
-        <Text style={styles.permissionTitle}>{t('cameraPermissionTitle')}</Text>
-        <Text style={styles.permissionHint}>{t('cameraPermissionHint')}</Text>
-        <Pressable
-          onPress={requestPermission}
-          style={({ pressed }) => [styles.permissionButton, pressed && styles.pressed]}>
-          <Text style={styles.permissionButtonText}>{t('allowCamera')}</Text>
-        </Pressable>
-        <Pressable onPress={goHome} style={styles.textButton}>
-          <Text style={styles.textButtonLabel}>{t('backHome')}</Text>
-        </Pressable>
-      </View>
-    );
-  }
-
   if (capturedPhoto) {
     return (
       <KeyboardAvoidingView
         style={styles.previewContainer}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={0}>
         <StatusBar style="light" />
 
@@ -185,6 +183,33 @@ export default function CameraScreen() {
           </Pressable>
         </View>
       </KeyboardAvoidingView>
+    );
+  }
+
+  if (!permission) {
+    return (
+      <View style={styles.fallback}>
+        <StatusBar style="light" />
+        <ActivityIndicator color="#ffffff" />
+      </View>
+    );
+  }
+
+  if (!permission.granted) {
+    return (
+      <View style={styles.fallback}>
+        <StatusBar style="light" />
+        <Text style={styles.permissionTitle}>{t('cameraPermissionTitle')}</Text>
+        <Text style={styles.permissionHint}>{t('cameraPermissionHint')}</Text>
+        <Pressable
+          onPress={requestPermission}
+          style={({ pressed }) => [styles.permissionButton, pressed && styles.pressed]}>
+          <Text style={styles.permissionButtonText}>{t('allowCamera')}</Text>
+        </Pressable>
+        <Pressable onPress={goHome} style={styles.textButton}>
+          <Text style={styles.textButtonLabel}>{t('backHome')}</Text>
+        </Pressable>
+      </View>
     );
   }
 

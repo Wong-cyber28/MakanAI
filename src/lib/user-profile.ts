@@ -1,3 +1,5 @@
+import { supabase } from '../../supabase';
+
 export const USER_PROFILE_KEY = '@user_profile';
 
 export const GENDERS = ['Male', 'Female'] as const;
@@ -16,7 +18,15 @@ export type UserProfile = {
   gender: Gender;
   activityLevel: ActivityLevel;
   primaryGoal: PrimaryGoal;
+  /** Locally picked / uploaded profile photo. Highest priority avatar source. */
+  avatarUri: string;
+  /** Google auth `photo_url`. Used when the user has not uploaded an image. */
+  photoUrl: string;
 };
+
+export type AvatarSource =
+  | { kind: 'image'; uri: string }
+  | { kind: 'initials'; initials: string };
 
 export const DEFAULT_PROFILE: UserProfile = {
   displayName: 'Wong Ying Boy',
@@ -26,6 +36,8 @@ export const DEFAULT_PROFILE: UserProfile = {
   gender: 'Male',
   activityLevel: 'Moderate',
   primaryGoal: 'Maintain',
+  avatarUri: '',
+  photoUrl: '',
 };
 
 function asString(value: unknown, fallback: string) {
@@ -53,6 +65,8 @@ export function parseUserProfile(raw: string | null): UserProfile {
       gender: asOneOf(parsed.gender, GENDERS, DEFAULT_PROFILE.gender),
       activityLevel: asOneOf(parsed.activityLevel, ACTIVITY_LEVELS, DEFAULT_PROFILE.activityLevel),
       primaryGoal: asOneOf(parsed.primaryGoal, PRIMARY_GOALS, DEFAULT_PROFILE.primaryGoal),
+      avatarUri: asString(parsed.avatarUri, DEFAULT_PROFILE.avatarUri),
+      photoUrl: asString(parsed.photoUrl, DEFAULT_PROFILE.photoUrl),
     };
   } catch {
     return { ...DEFAULT_PROFILE };
@@ -91,6 +105,55 @@ export async function saveUserProfile(profile: UserProfile): Promise<void> {
   }
 
   await AsyncStorage.setItem(USER_PROFILE_KEY, JSON.stringify(profile));
+}
+
+export function initialsFromName(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) {
+    return 'WB';
+  }
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+}
+
+export function resolveAvatarSource(profile: Pick<UserProfile, 'avatarUri' | 'photoUrl' | 'displayName'>): AvatarSource {
+  const uploaded = profile.avatarUri.trim();
+  if (uploaded) {
+    return { kind: 'image', uri: uploaded };
+  }
+
+  const googlePhoto = profile.photoUrl.trim();
+  if (googlePhoto) {
+    return { kind: 'image', uri: googlePhoto };
+  }
+
+  return { kind: 'initials', initials: initialsFromName(profile.displayName) };
+}
+
+export async function updateProfileAvatarInSupabase(avatarUri: string): Promise<void> {
+  try {
+    const { data: sessionData, error: sessionError } = await supabase.auth.getUser();
+    if (sessionError || !sessionData.user) {
+      return;
+    }
+
+    const { error } = await supabase.from('profiles').upsert(
+      {
+        id: sessionData.user.id,
+        avatar_url: avatarUri,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'id' }
+    );
+
+    if (error) {
+      console.warn('Skipped Supabase profile avatar update', error.message);
+    }
+  } catch (error) {
+    console.warn('Skipped Supabase profile avatar update', error);
+  }
 }
 
 export function dateFromDob(dob: string): Date {

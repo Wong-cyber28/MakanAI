@@ -1,13 +1,15 @@
 import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
 import { useFocusEffect, useRouter, type Href } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { SymbolView } from 'expo-symbols';
 import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Alert, Linking, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Linking, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CARD_SHADOW, LinkRow, OptionPicker, SettingsSection } from '@/components/settings-ui';
-import { WARM_BEIGE } from '@/constants/brand';
+import { PANDAN, WARM_BEIGE } from '@/constants/brand';
 import i18n, {
   APP_LANGUAGES,
   changeAppLanguage,
@@ -19,11 +21,12 @@ import {
   ageFromDob,
   DEFAULT_PROFILE,
   loadUserProfile,
+  resolveAvatarSource,
   saveUserProfile,
+  updateProfileAvatarInSupabase,
   type UserProfile,
 } from '@/lib/user-profile';
 
-const AVATAR_URI = 'https://ui-avatars.com/api/?name=Wong+Ying+Boy&background=random';
 const SUPPORT_EMAIL = 'makanai.app@gmail.com';
 const LEGAL_URL =
   'https://serious-ringer-b04.notion.site/Privacy-Policy-for-MakanAI-3d2f889ea53a801b820cea41c275d6ee';
@@ -64,9 +67,42 @@ export default function SettingsScreen() {
     void saveUserProfile(next);
   };
 
+  const pickAvatar = useCallback(async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert(t('photoPermissionTitle'), t('photoPermissionHint'));
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.85,
+    });
+
+    if (result.canceled) {
+      return;
+    }
+
+    const uri = result.assets[0]?.uri;
+    if (!uri) {
+      return;
+    }
+
+    setProfile((current) => {
+      const next = { ...current, avatarUri: uri };
+      void saveUserProfile(next);
+      return next;
+    });
+    void updateProfileAvatarInSupabase(uri);
+  }, [t]);
+
   const showSoon = (title: string) => {
     Alert.alert(title, t('comingSoon'));
   };
+
+  const avatar = resolveAvatarSource(profile);
 
   return (
     <ScrollView
@@ -80,12 +116,29 @@ export default function SettingsScreen() {
       <StatusBar style="dark" />
 
       <View style={styles.profileCard}>
-        <Image
-          source={{ uri: AVATAR_URI }}
-          style={styles.avatar}
-          contentFit="cover"
-          transition={200}
-        />
+        <TouchableOpacity
+          activeOpacity={0.82}
+          onPress={() => {
+            void pickAvatar();
+          }}
+          accessibilityRole="button"
+          accessibilityLabel={t('changeProfilePhoto')}
+          style={styles.avatarTap}>
+          {avatar.kind === 'image' ? (
+            <Image source={{ uri: avatar.uri }} style={styles.avatar} contentFit="cover" transition={200} />
+          ) : (
+            <View style={[styles.avatar, styles.avatarInitials]}>
+              <Text style={styles.avatarInitialsText}>{avatar.initials}</Text>
+            </View>
+          )}
+          <View style={styles.avatarBadge}>
+            <SymbolView
+              name={{ ios: 'camera.fill', android: 'photo_camera', web: 'camera' }}
+              tintColor="#FFFFFF"
+              size={11}
+            />
+          </View>
+        </TouchableOpacity>
         <View style={styles.profileCopy}>
           <TextInput
             value={profile.displayName}
@@ -187,11 +240,45 @@ const styles = StyleSheet.create({
     marginBottom: 22,
     ...CARD_SHADOW,
   },
+  avatarTap: {
+    width: 68,
+    height: 68,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   avatar: {
     width: 64,
     height: 64,
     borderRadius: 32,
     backgroundColor: '#EDE6DC',
+  },
+  avatarInitials: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarInitialsText: {
+    color: PANDAN,
+    fontSize: 20,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+  },
+  avatarBadge: {
+    position: 'absolute',
+    right: 0,
+    bottom: 0,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: PANDAN,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    shadowColor: '#1C1916',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    elevation: 3,
   },
   profileCopy: {
     flex: 1,
