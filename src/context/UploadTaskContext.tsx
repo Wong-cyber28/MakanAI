@@ -12,7 +12,7 @@ import { Alert, Platform } from 'react-native';
 
 import i18n from '@/locales/i18n';
 import type { MealIngredient, MealLog } from '../../types/supabase';
-import { supabase } from '../lib/supabase';
+import { SUPABASE_ANON_KEY, SUPABASE_URL, supabase } from '../lib/supabase';
 import { getCurrentUserId } from '@/lib/session-user';
 
 const ANALYZE_URL = 'https://efkkdohscemtjdxgmvtb.supabase.co/functions/v1/analyze-meal';
@@ -57,6 +57,11 @@ type MealAnalysis = {
   ingredients: MealIngredient[];
 };
 
+export type ProcessMealOptions = {
+  replaceMealId?: string;
+  reuseImageUrl?: string;
+};
+
 export type UploadTaskContextValue = {
   isProcessing: boolean;
   processProgress: number;
@@ -64,7 +69,8 @@ export type UploadTaskContextValue = {
   startProcessingTask: (
     imageUri: string,
     base64Data: string,
-    extraPrompt?: string
+    extraPrompt?: string,
+    options?: ProcessMealOptions
   ) => Promise<void>;
 };
 
@@ -149,6 +155,13 @@ function parseIngredients(value: unknown): MealIngredient[] {
   } catch {
     return [];
   }
+}
+
+function missingColumn(error: { message?: string; details?: string; code?: string } | null, column: string) {
+  if (!error) {
+    return false;
+  }
+  return new RegExp(column, 'i').test(`${error.message ?? ''} ${error.details ?? ''} ${error.code ?? ''}`);
 }
 
 function isNonFoodPayload(payload: unknown): boolean {
@@ -286,8 +299,8 @@ async function uploadMealImage(base64: string, userId: string, accessToken: stri
     throw new Error('照片数据不完整，请重新拍摄');
   }
 
-  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+  const supabaseUrl = SUPABASE_URL;
+  const anonKey = SUPABASE_ANON_KEY;
   if (!supabaseUrl || !anonKey) {
     throw new Error('缺少 Supabase 配置');
   }
@@ -343,7 +356,7 @@ async function analyzeMeal(base64Data: string, extraPrompt?: string): Promise<Me
     throw new Error('Please sign in before analyzing a meal.');
   }
 
-  const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';
+  const anonKey = SUPABASE_ANON_KEY;
   const response = await fetch(ANALYZE_URL, {
     method: 'POST',
     headers: {
@@ -413,7 +426,7 @@ export function UploadTaskProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const startProcessingTask = useCallback(
-    async (imageUri: string, base64Data: string, extraPrompt?: string) => {
+    async (imageUri: string, base64Data: string, extraPrompt?: string, options?: ProcessMealOptions) => {
       if (runningRef.current) {
         return;
       }
@@ -449,7 +462,8 @@ export function UploadTaskProvider({ children }: { children: ReactNode }) {
         }
 
         await assertSameUser(startedAs);
-        const imageUrl = await uploadMealImage(base64Data, startedAs, accessToken);
+        const reuseUrl = options?.reuseImageUrl?.startsWith('http') ? options.reuseImageUrl : '';
+        const imageUrl = reuseUrl || (await uploadMealImage(base64Data, startedAs, accessToken));
 
         if (!imageUrl.startsWith('http')) {
           throw new Error('没有拿到有效的图片链接');
@@ -457,6 +471,7 @@ export function UploadTaskProvider({ children }: { children: ReactNode }) {
 
         await assertSameUser(startedAs);
 
+        const extraNote = extraPrompt?.trim() || null;
         const mealRow = {
           user_id: startedAs,
           dish_name: analysis.dish_name,
@@ -467,24 +482,41 @@ export function UploadTaskProvider({ children }: { children: ReactNode }) {
             fat: analysis.macros.fat,
           },
           ingredients: analysis.ingredients,
+          extra_note: extraNote,
           image_url: imageUrl,
         } satisfies Pick<
           MealLog,
-          'user_id' | 'dish_name' | 'total_calories' | 'macros' | 'ingredients' | 'image_url'
+          'user_id' | 'dish_name' | 'total_calories' | 'macros' | 'ingredients' | 'extra_note' | 'image_url'
         >;
 
-        let { error } = await supabase.from('meal_logs').insert(mealRow);
+        const writeMeal = (row: Record<string, unknown>) =>
+          options?.replaceMealId
+            ? supabase.from('meal_logs').update(row).eq('id', options.replaceMealId).eq('user_id', startedAs)
+            : supabase.from('meal_logs').insert(row);
 
-        if (error && /ingredients/i.test(`${error.message} ${error.details ?? ''} ${error.code ?? ''}`)) {
-          const fallback = await supabase.from('meal_logs').insert({
-            user_id: mealRow.user_id,
-            dish_name: mealRow.dish_name,
-            total_calories: mealRow.total_calories,
+        let { error } = await writeMeal(mealRow);
+
+        if (missingColumn(error, 'extra_note')) {
+          const { extra_note: _ignored, ...withoutNote } = mealRow;
+          const fallback = await writeMeal({
+            ...withoutNote,
             macros: {
               ...mealRow.macros,
-              ingredients: mealRow.ingredients,
+              extra_note: extraNote,
             },
-            image_url: mealRow.image_url,
+          });
+          error = fallback.error;
+        }
+
+        if (missingColumn(error, 'ingredients')) {
+          const { extra_note: _ignored, ingredients, ...rest } = mealRow;
+          const fallback = await writeMeal({
+            ...rest,
+            macros: {
+              ...mealRow.macros,
+              ingredients,
+              extra_note: extraNote,
+            },
           });
           error = fallback.error;
         }

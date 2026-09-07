@@ -14,7 +14,10 @@ import { supabase } from '@/lib/supabase';
 WebBrowser.maybeCompleteAuthSession();
 
 const CREAM = '#F5F5DC';
-const redirectTo = makeRedirectUri({ scheme: 'makanai' });
+const redirectTo = makeRedirectUri({
+  scheme: 'makanai',
+  native: 'makanai://',
+});
 
 type LoginScreenProps = {
   onContinue?: () => void;
