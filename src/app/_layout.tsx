@@ -52,6 +52,7 @@ function CameraFab({
 export default function RootLayout() {
   const { t } = useTranslation();
   const addMealSheetRef = useRef<BottomSheetModal>(null);
+  const [authReady, setAuthReady] = useState(false);
   const [isSignedIn, setIsSignedIn] = useState(false);
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
 
@@ -66,6 +67,11 @@ export default function RootLayout() {
     void supabase.auth.getSession().then(({ data }) => {
       if (!ignore) {
         applySession(data.session);
+        setAuthReady(true);
+      }
+    }).catch(() => {
+      if (!ignore) {
+        setAuthReady(true);
       }
     });
 
@@ -160,7 +166,7 @@ export default function RootLayout() {
           <AddMealSheet sheetRef={addMealSheetRef} />
         </UploadTaskProvider>
         <Modal
-          visible={!isSignedIn}
+          visible={authReady && !isSignedIn}
           animationType="fade"
           presentationStyle="fullScreen"
           statusBarTranslucent

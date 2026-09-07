@@ -7,26 +7,47 @@ const corsHeaders = {
 };
 
 const MEAL_IMAGES_BUCKET = 'meal_images';
+const PAGE_SIZE = 100;
+
+function jsonResponse(body: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}
 
 async function deleteUserMealImages(
   admin: ReturnType<typeof createClient>,
   userId: string
 ) {
-  const { data: files, error } = await admin.storage
-    .from(MEAL_IMAGES_BUCKET)
-    .list(userId, { limit: 1000 });
+  for (;;) {
+    const { data: files, error } = await admin.storage
+      .from(MEAL_IMAGES_BUCKET)
+      .list(userId, { limit: PAGE_SIZE });
 
-  if (error || !files?.length) {
-    return;
-  }
+    if (error) {
+      throw error;
+    }
+    if (!files?.length) {
+      return;
+    }
 
-  const paths = files
-    .map((file) => file.name)
-    .filter((name): name is string => Boolean(name))
-    .map((name) => `${userId}/${name}`);
+    const paths = files
+      .filter((file) => Boolean(file.name) && Boolean(file.id))
+      .map((file) => `${userId}/${file.name}`);
 
-  if (paths.length > 0) {
-    await admin.storage.from(MEAL_IMAGES_BUCKET).remove(paths);
+    if (paths.length === 0) {
+      return;
+    }
+
+    const { error: removeError } = await admin.storage.from(MEAL_IMAGES_BUCKET).remove(paths);
+    if (removeError) {
+      throw removeError;
+    }
+
+    if (files.length < PAGE_SIZE) {
+      return;
+    }
   }
 }
 
@@ -35,40 +56,38 @@ serve(async (req) => {
     return new Response('ok', { headers: corsHeaders });
   }
 
-  const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
-  const anonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
-  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
-  const authHeader = req.headers.get('Authorization') ?? '';
+  try {
+    const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
+    const anonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+    const authHeader = req.headers.get('Authorization') ?? '';
 
-  const userClient = createClient(supabaseUrl, anonKey, {
-    global: { headers: { Authorization: authHeader } },
-  });
-  const {
-    data: { user },
-    error: userError,
-  } = await userClient.auth.getUser();
-
-  if (userError || !user) {
-    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-      status: 401,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    const userClient = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: authHeader } },
     });
-  }
+    const {
+      data: { user },
+      error: userError,
+    } = await userClient.auth.getUser();
 
-  const admin = createClient(supabaseUrl, serviceRoleKey);
-  await admin.from('meal_logs').delete().eq('user_id', user.id);
-  await admin.from('profiles').delete().eq('id', user.id);
-  await deleteUserMealImages(admin, user.id);
+    if (userError || !user) {
+      return jsonResponse({ error: 'Unauthorized' }, 401);
+    }
 
-  const { error: deleteError } = await admin.auth.admin.deleteUser(user.id);
-  if (deleteError) {
-    return new Response(JSON.stringify({ error: deleteError.message }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    const admin = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
     });
-  }
 
-  return new Response(JSON.stringify({ ok: true }), {
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-  });
+    await deleteUserMealImages(admin, user.id);
+
+    const { error: deleteError } = await admin.auth.admin.deleteUser(user.id);
+    if (deleteError) {
+      return jsonResponse({ error: deleteError.message }, 500);
+    }
+
+    return jsonResponse({ ok: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Internal Server Error';
+    return jsonResponse({ error: message }, 500);
+  }
 });
