@@ -4,15 +4,17 @@ import { BottomSheetModal, BottomSheetModalProvider } from '@gorhom/bottom-sheet
 import { Tabs } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { SymbolView } from 'expo-symbols';
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Modal, Pressable, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { AddMealSheet } from '@/components/add-meal-sheet';
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { MUTED_ICON, PANDAN, WARM_BEIGE } from '@/constants/brand';
 import { UploadTaskProvider } from '@/context/UploadTaskContext';
+import { supabase } from '@/lib/supabase';
+import LoginScreen from './login';
 
 export { ErrorBoundary } from 'expo-router';
 
@@ -50,17 +52,47 @@ function CameraFab({
 export default function RootLayout() {
   const { t } = useTranslation();
   const addMealSheetRef = useRef<BottomSheetModal>(null);
+  const [isSignedIn, setIsSignedIn] = useState(false);
+  const [sessionUserId, setSessionUserId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let ignore = false;
+
+    const applySession = (session: { user?: { id?: string } | null } | null) => {
+      setIsSignedIn(Boolean(session));
+      setSessionUserId(session?.user?.id ?? null);
+    };
+
+    void supabase.auth.getSession().then(({ data }) => {
+      if (!ignore) {
+        applySession(data.session);
+      }
+    });
+
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      applySession(session);
+    });
+
+    return () => {
+      ignore = true;
+      data.subscription.unsubscribe();
+    };
+  }, []);
 
   const openAddMealSheet = useCallback(() => {
     addMealSheetRef.current?.present();
   }, []);
 
+  const handleLoginContinue = useCallback(() => {
+    setIsSignedIn(true);
+  }, []);
+
   return (
     <GestureHandlerRootView style={styles.root}>
       <BottomSheetModalProvider>
-        <UploadTaskProvider>
+        <AnimatedSplashOverlay />
+        <UploadTaskProvider key={sessionUserId ?? 'signed-out'}>
           <View style={styles.root}>
-            <AnimatedSplashOverlay />
             <Tabs
             screenOptions={{
               headerShown: false,
@@ -115,10 +147,26 @@ export default function RootLayout() {
                 ),
               }}
             />
+            <Tabs.Screen
+              name="login"
+              options={{
+                href: null,
+                headerShown: false,
+                tabBarStyle: { display: 'none' },
+              }}
+            />
           </Tabs>
           </View>
           <AddMealSheet sheetRef={addMealSheetRef} />
         </UploadTaskProvider>
+        <Modal
+          visible={!isSignedIn}
+          animationType="fade"
+          presentationStyle="fullScreen"
+          statusBarTranslucent
+          onRequestClose={() => {}}>
+          <LoginScreen onContinue={handleLoginContinue} />
+        </Modal>
       </BottomSheetModalProvider>
     </GestureHandlerRootView>
   );

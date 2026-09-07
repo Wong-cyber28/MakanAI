@@ -17,6 +17,7 @@ import i18n, {
   getLanguageLabel,
   isAppLanguage,
 } from '@/locales/i18n';
+import { useUploadTask } from '@/context/UploadTaskContext';
 import {
   ageFromDob,
   DEFAULT_PROFILE,
@@ -26,6 +27,8 @@ import {
   updateProfileAvatarInSupabase,
   type UserProfile,
 } from '@/lib/user-profile';
+import { clearLocalUserData, getCurrentUserId } from '@/lib/session-user';
+import { supabase } from '@/lib/supabase';
 
 const SUPPORT_EMAIL = 'makanai.app@gmail.com';
 const LEGAL_URL =
@@ -48,6 +51,7 @@ export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { t, i18n } = useTranslation();
+  const { isProcessing } = useUploadTask();
   const [profile, setProfile] = useState<UserProfile>(DEFAULT_PROFILE);
   const [showLanguagePicker, setShowLanguagePicker] = useState(false);
   const currentLanguage = getAppLanguage(i18n.resolvedLanguage ?? i18n.language);
@@ -98,9 +102,63 @@ export default function SettingsScreen() {
     void updateProfileAvatarInSupabase(uri);
   }, [t]);
 
-  const showSoon = (title: string) => {
-    Alert.alert(title, t('comingSoon'));
-  };
+  const handleLogout = useCallback(() => {
+    if (isProcessing) {
+      Alert.alert(t('logout'), t('waitForAnalysis'));
+      return;
+    }
+
+    Alert.alert(t('logout'), t('logoutConfirm'), [
+      { text: t('cancel'), style: 'cancel' },
+      {
+        text: t('logout'),
+        onPress: () => {
+          void supabase.auth.signOut();
+        },
+      },
+    ]);
+  }, [isProcessing, t]);
+
+  const handleDeleteAccount = useCallback(() => {
+    if (isProcessing) {
+      Alert.alert(t('deleteAccount'), t('waitForAnalysis'));
+      return;
+    }
+
+    Alert.alert(t('deleteAccount'), t('deleteAccountMessage'), [
+      { text: t('cancel'), style: 'cancel' },
+      {
+        text: t('delete'),
+        style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            try {
+              const userId = await getCurrentUserId();
+              if (!userId) {
+                await supabase.auth.signOut();
+                return;
+              }
+
+              const { data, error } = await supabase.functions.invoke('delete-account');
+              const remoteMessage =
+                data && typeof data === 'object' && 'error' in data && typeof data.error === 'string'
+                  ? data.error
+                  : null;
+              if (error || remoteMessage) {
+                throw new Error(remoteMessage || error?.message || 'Delete account failed');
+              }
+
+              await clearLocalUserData(userId);
+              await supabase.auth.signOut();
+            } catch (error) {
+              console.error('删除账号失败', error);
+              Alert.alert(t('deleteAccount'), t('saveFailed'));
+            }
+          })();
+        },
+      },
+    ]);
+  }, [isProcessing, t]);
 
   const avatar = resolveAvatarSource(profile);
 
@@ -192,18 +250,8 @@ export default function SettingsScreen() {
       </SettingsSection>
 
       <SettingsSection title={t('accountActions')}>
-        <LinkRow chevron={false} label={t('logout')} onPress={() => showSoon(t('logout'))} />
-        <LinkRow
-          last
-          danger
-          label={t('deleteAccount')}
-          onPress={() =>
-            Alert.alert(t('deleteAccount'), t('deleteAccountMessage'), [
-              { text: t('cancel'), style: 'cancel' },
-              { text: t('delete'), style: 'destructive' },
-            ])
-          }
-        />
+        <LinkRow chevron={false} label={t('logout')} onPress={handleLogout} />
+        <LinkRow last danger label={t('deleteAccount')} onPress={handleDeleteAccount} />
       </SettingsSection>
 
       <OptionPicker

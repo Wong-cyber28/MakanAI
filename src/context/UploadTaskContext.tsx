@@ -1,17 +1,19 @@
 import {
-  createContext,
-  useCallback,
-  useContext,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
+    createContext,
+    useCallback,
+    useContext,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+    type ReactNode,
 } from 'react';
 import { Alert, Platform } from 'react-native';
 
 import i18n from '@/locales/i18n';
-import { supabase } from '../../supabase';
 import type { MealIngredient, MealLog } from '../../types/supabase';
+import { supabase } from '../lib/supabase';
+import { getCurrentUserId } from '@/lib/session-user';
 
 const ANALYZE_URL = 'https://efkkdohscemtjdxgmvtb.supabase.co/functions/v1/analyze-meal';
 const MEAL_IMAGES_BUCKET = 'meal_images';
@@ -34,6 +36,13 @@ class NotFoodError extends Error {
   constructor() {
     super('No food detected');
     this.name = 'NotFoodError';
+  }
+}
+
+class SessionChangedError extends Error {
+  constructor() {
+    super('Session changed');
+    this.name = 'SessionChangedError';
   }
 }
 
@@ -241,11 +250,16 @@ function decodeBase64ToArrayBuffer(base64: string): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
 }
 
-function uploadWithXhr(objectUrl: string, body: ArrayBuffer, anonKey: string): Promise<void> {
+function uploadWithXhr(
+  objectUrl: string,
+  body: ArrayBuffer,
+  anonKey: string,
+  accessToken: string
+): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', objectUrl);
-    xhr.setRequestHeader('Authorization', `Bearer ${anonKey}`);
+    xhr.setRequestHeader('Authorization', `Bearer ${accessToken}`);
     xhr.setRequestHeader('apikey', anonKey);
     xhr.setRequestHeader('Content-Type', 'image/jpeg');
     xhr.setRequestHeader('x-upsert', 'false');
@@ -264,8 +278,8 @@ function uploadWithXhr(objectUrl: string, body: ArrayBuffer, anonKey: string): P
   });
 }
 
-async function uploadMealImage(base64: string): Promise<string> {
-  const fileName = uniqueMealImageName();
+async function uploadMealImage(base64: string, userId: string, accessToken: string): Promise<string> {
+  const fileName = `${userId}/${uniqueMealImageName()}`;
   const body = decodeBase64ToArrayBuffer(base64);
 
   if (body.byteLength < 32) {
@@ -291,7 +305,7 @@ async function uploadMealImage(base64: string): Promise<string> {
     }
   } else {
     try {
-      await uploadWithXhr(objectUrl, body, anonKey);
+      await uploadWithXhr(objectUrl, body, anonKey, accessToken);
     } catch (xhrError) {
       console.warn('XHR 上传失败，改用 Supabase SDK', xhrError);
       const { error } = await supabase.storage.from(MEAL_IMAGES_BUCKET).upload(fileName, body, {
@@ -322,9 +336,21 @@ async function analyzeMeal(base64Data: string, extraPrompt?: string): Promise<Me
     ? `${GEMINI_OUTPUT_CONTRACT}\n\n${extraNote}`
     : GEMINI_OUTPUT_CONTRACT;
 
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (!session?.access_token) {
+    throw new Error('Please sign in before analyzing a meal.');
+  }
+
+  const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';
   const response = await fetch(ANALYZE_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${session.access_token}`,
+      apikey: anonKey,
+    },
     body: JSON.stringify({
       imageBase64: base64Data,
       userContext,
@@ -361,6 +387,7 @@ export function UploadTaskProvider({ children }: { children: ReactNode }) {
   const [processProgress, setProcessProgress] = useState(0);
   const [processingImage, setProcessingImage] = useState<string | null>(null);
   const runningRef = useRef(false);
+  const mountedRef = useRef(true);
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const clearProgressTimer = useCallback(() => {
@@ -370,9 +397,34 @@ export function UploadTaskProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      clearProgressTimer();
+    };
+  }, [clearProgressTimer]);
+
+  const assertSameUser = useCallback(async (startedAs: string) => {
+    const currentId = await getCurrentUserId();
+    if (!mountedRef.current || currentId !== startedAs) {
+      throw new SessionChangedError();
+    }
+  }, []);
+
   const startProcessingTask = useCallback(
     async (imageUri: string, base64Data: string, extraPrompt?: string) => {
       if (runningRef.current) {
+        return;
+      }
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const startedAs = session?.user?.id;
+      const accessToken = session?.access_token;
+      if (!startedAs || !accessToken) {
+        Alert.alert(i18n.t('mealNotSaved'), 'Please sign in before saving a meal.');
         return;
       }
 
@@ -396,13 +448,17 @@ export function UploadTaskProvider({ children }: { children: ReactNode }) {
           throw new NotFoodError();
         }
 
-        const imageUrl = await uploadMealImage(base64Data);
+        await assertSameUser(startedAs);
+        const imageUrl = await uploadMealImage(base64Data, startedAs, accessToken);
 
         if (!imageUrl.startsWith('http')) {
           throw new Error('没有拿到有效的图片链接');
         }
 
+        await assertSameUser(startedAs);
+
         const mealRow = {
+          user_id: startedAs,
           dish_name: analysis.dish_name,
           total_calories: analysis.total_calories,
           macros: {
@@ -414,13 +470,14 @@ export function UploadTaskProvider({ children }: { children: ReactNode }) {
           image_url: imageUrl,
         } satisfies Pick<
           MealLog,
-          'dish_name' | 'total_calories' | 'macros' | 'ingredients' | 'image_url'
+          'user_id' | 'dish_name' | 'total_calories' | 'macros' | 'ingredients' | 'image_url'
         >;
 
         let { error } = await supabase.from('meal_logs').insert(mealRow);
 
         if (error && /ingredients/i.test(`${error.message} ${error.details ?? ''} ${error.code ?? ''}`)) {
           const fallback = await supabase.from('meal_logs').insert({
+            user_id: mealRow.user_id,
             dish_name: mealRow.dish_name,
             total_calories: mealRow.total_calories,
             macros: {
@@ -436,10 +493,16 @@ export function UploadTaskProvider({ children }: { children: ReactNode }) {
           throw error;
         }
 
+        await assertSameUser(startedAs);
         clearProgressTimer();
-        setProcessProgress(100);
+        if (mountedRef.current) {
+          setProcessProgress(100);
+        }
         await new Promise((resolve) => setTimeout(resolve, 420));
       } catch (error) {
+        if (error instanceof SessionChangedError || !mountedRef.current) {
+          return;
+        }
         if (error instanceof NotFoodError) {
           Alert.alert(i18n.t('notFoodTitle'), i18n.t('notFoodBody'), [{ text: i18n.t('gotIt') }]);
         } else {
@@ -449,12 +512,14 @@ export function UploadTaskProvider({ children }: { children: ReactNode }) {
       } finally {
         clearProgressTimer();
         runningRef.current = false;
-        setIsProcessing(false);
-        setProcessingImage(null);
-        setProcessProgress(0);
+        if (mountedRef.current) {
+          setIsProcessing(false);
+          setProcessingImage(null);
+          setProcessProgress(0);
+        }
       }
     },
-    [clearProgressTimer]
+    [assertSameUser, clearProgressTimer]
   );
 
   const value = useMemo(
