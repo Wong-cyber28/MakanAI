@@ -1,4 +1,4 @@
-export const NUTRITION_TARGETS_KEY = '@user_nutrition_targets';
+import { getCurrentUserId, nutritionStorageKey } from './session-user';
 
 export type NutritionTargets = {
   calories: number;
@@ -49,12 +49,13 @@ async function getAsyncStorage() {
 
 export async function loadNutritionTargets(): Promise<NutritionTargets> {
   try {
+    const userId = await getCurrentUserId();
     const AsyncStorage = await getAsyncStorage();
-    if (!AsyncStorage) {
+    if (!AsyncStorage || !userId) {
       return { ...DEFAULT_NUTRITION_TARGETS };
     }
 
-    const raw = await AsyncStorage.getItem(NUTRITION_TARGETS_KEY);
+    const raw = await AsyncStorage.getItem(nutritionStorageKey(userId));
     return parseNutritionTargets(raw);
   } catch (error) {
     console.warn('读取营养目标失败，使用默认值', error);
@@ -63,12 +64,13 @@ export async function loadNutritionTargets(): Promise<NutritionTargets> {
 }
 
 export async function saveNutritionTargets(targets: NutritionTargets): Promise<void> {
+  const userId = await getCurrentUserId();
   const AsyncStorage = await getAsyncStorage();
-  if (!AsyncStorage) {
+  if (!AsyncStorage || !userId) {
     throw new Error('AsyncStorage 暂不可用，请使用已重新编译的开发客户端。');
   }
 
-  await AsyncStorage.setItem(NUTRITION_TARGETS_KEY, JSON.stringify(targets));
+  await AsyncStorage.setItem(nutritionStorageKey(userId), JSON.stringify(targets));
 }
 
 export type Sex = 'male' | 'female';

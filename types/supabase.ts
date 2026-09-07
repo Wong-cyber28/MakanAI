@@ -11,6 +11,7 @@ export type MealIngredient = {
 
 export type MealLog = {
   id?: string;
+  user_id?: string;
   dish_name: string;
   total_calories: number;
   macros: MealMacros;

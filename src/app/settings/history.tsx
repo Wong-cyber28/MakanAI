@@ -6,7 +6,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CARD_SHADOW } from '@/components/settings-ui';
 import { PANDAN, WARM_BEIGE } from '@/constants/brand';
-import { supabase } from '../../../supabase';
+import { supabase } from '../../lib/supabase';
+import { getCurrentUserId } from '@/lib/session-user';
 
 type ViewMode = 'week' | 'month';
 
@@ -108,9 +109,18 @@ async function fetchAndProcessHistoryData() {
   const startDate = shiftDays(today, -(HISTORY_DAYS - 1));
   const consecutiveDates = buildConsecutiveDates(today, HISTORY_DAYS);
 
+  const userId = await getCurrentUserId();
+  if (!userId) {
+    return {
+      processedWeekData: [],
+      processedMonthData: [],
+    };
+  }
+
   const { data, error } = await supabase
     .from('meal_logs')
     .select('total_calories, created_at')
+    .eq('user_id', userId)
     .gte('created_at', startDate.toISOString());
 
   if (error) {

@@ -9,6 +9,8 @@ import {
   Image,
   Keyboard,
   KeyboardAvoidingView,
+  Linking,
+  Modal,
   Platform,
   Pressable,
   StyleSheet,
@@ -41,7 +43,7 @@ export default function CameraScreen() {
   const cameraRef = useRef<CameraView>(null);
   const capturingRef = useRef(false);
   const sendingRef = useRef(false);
-  const [permission, requestPermission] = useCameraPermissions();
+  const [permission, requestPermission, getPermission] = useCameraPermissions();
   const [isCapturing, setIsCapturing] = useState(false);
   const [capturedPhoto, setCapturedPhoto] = useState<CapturedPhoto | null>(null);
   const [extraPrompt, setExtraPrompt] = useState('');
@@ -71,6 +73,44 @@ export default function CameraScreen() {
       setCapturedPhoto(null);
     }, [])
   );
+
+  useFocusEffect(
+    useCallback(() => {
+      if (capturedPhoto) {
+        return;
+      }
+
+      void getPermission();
+    }, [capturedPhoto, getPermission])
+  );
+
+  const handleAllowCamera = useCallback(async () => {
+    try {
+      const current = permission ?? (await getPermission());
+      if (current?.granted) {
+        return;
+      }
+
+      if (current?.canAskAgain === false) {
+        await Linking.openSettings();
+        await getPermission();
+        return;
+      }
+
+      const result = await requestPermission();
+      if (result.granted) {
+        return;
+      }
+
+      if (result.canAskAgain === false) {
+        await Linking.openSettings();
+        await getPermission();
+      }
+    } catch (error) {
+      console.error('相机权限请求失败', error);
+      Alert.alert(t('cameraPermissionTitle'), t('cameraPermissionHint'));
+    }
+  }, [getPermission, permission, requestPermission, t]);
 
   const goHome = useCallback(() => {
     router.replace('/');
@@ -117,6 +157,7 @@ export default function CameraScreen() {
       const photo = await camera.takePictureAsync({
         base64: true,
         quality: 0.7,
+        shutterSound: false,
       });
 
       if (!photo?.base64) {
@@ -199,16 +240,29 @@ export default function CameraScreen() {
     return (
       <View style={styles.fallback}>
         <StatusBar style="light" />
-        <Text style={styles.permissionTitle}>{t('cameraPermissionTitle')}</Text>
-        <Text style={styles.permissionHint}>{t('cameraPermissionHint')}</Text>
-        <Pressable
-          onPress={requestPermission}
-          style={({ pressed }) => [styles.permissionButton, pressed && styles.pressed]}>
-          <Text style={styles.permissionButtonText}>{t('allowCamera')}</Text>
-        </Pressable>
-        <Pressable onPress={goHome} style={styles.textButton}>
-          <Text style={styles.textButtonLabel}>{t('backHome')}</Text>
-        </Pressable>
+        <Modal
+          visible
+          transparent={false}
+          animationType="fade"
+          presentationStyle="fullScreen"
+          onRequestClose={goHome}>
+          <View style={styles.fallback}>
+            <Text style={styles.permissionTitle}>{t('cameraPermissionTitle')}</Text>
+            <Text style={styles.permissionHint}>{t('cameraPermissionHint')}</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t('allowCamera')}
+              onPress={() => {
+                void handleAllowCamera();
+              }}
+              style={({ pressed }) => [styles.permissionButton, pressed && styles.pressed]}>
+              <Text style={styles.permissionButtonText}>{t('allowCamera')}</Text>
+            </Pressable>
+            <Pressable onPress={goHome} style={styles.textButton}>
+              <Text style={styles.textButtonLabel}>{t('backHome')}</Text>
+            </Pressable>
+          </View>
+        </Modal>
       </View>
     );
   }

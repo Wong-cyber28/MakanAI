@@ -1,4 +1,5 @@
-import { supabase } from '../../supabase';
+import { supabase } from './supabase';
+import { getCurrentUserId, profileStorageKey } from './session-user';
 
 export const USER_PROFILE_KEY = '@user_profile';
 
@@ -29,10 +30,10 @@ export type AvatarSource =
   | { kind: 'initials'; initials: string };
 
 export const DEFAULT_PROFILE: UserProfile = {
-  displayName: 'Wong Ying Boy',
+  displayName: '',
   height: '',
   weight: '',
-  dob: '2007-04-28',
+  dob: '',
   gender: 'Male',
   activityLevel: 'Moderate',
   primaryGoal: 'Maintain',
@@ -85,13 +86,36 @@ async function getAsyncStorage() {
 
 export async function loadUserProfile(): Promise<UserProfile> {
   try {
-    const AsyncStorage = await getAsyncStorage();
-    if (!AsyncStorage) {
+    const userId = await getCurrentUserId();
+    if (!userId) {
       return { ...DEFAULT_PROFILE };
     }
 
-    const raw = await AsyncStorage.getItem(USER_PROFILE_KEY);
-    return parseUserProfile(raw);
+    const AsyncStorage = await getAsyncStorage();
+    if (AsyncStorage) {
+      const raw = await AsyncStorage.getItem(profileStorageKey(userId));
+      if (raw) {
+        return parseUserProfile(raw);
+      }
+    }
+
+    const { data: authData } = await supabase.auth.getUser();
+    const user = authData.user;
+    const meta = (user?.user_metadata ?? {}) as Record<string, unknown>;
+    const googleName =
+      asString(meta.full_name, '') ||
+      asString(meta.name, '') ||
+      (typeof user?.email === 'string' ? user.email.split('@')[0] : '');
+    const googlePhoto = asString(meta.avatar_url, '') || asString(meta.picture, '');
+    const seeded: UserProfile = {
+      ...DEFAULT_PROFILE,
+      displayName: googleName.trim(),
+      photoUrl: googlePhoto.trim(),
+    };
+    if (AsyncStorage) {
+      await AsyncStorage.setItem(profileStorageKey(userId), JSON.stringify(seeded));
+    }
+    return seeded;
   } catch (error) {
     console.warn('读取个人资料失败，使用默认值', error);
     return { ...DEFAULT_PROFILE };
@@ -99,18 +123,40 @@ export async function loadUserProfile(): Promise<UserProfile> {
 }
 
 export async function saveUserProfile(profile: UserProfile): Promise<void> {
-  const AsyncStorage = await getAsyncStorage();
-  if (!AsyncStorage) {
+  const userId = await getCurrentUserId();
+  if (!userId) {
     return;
   }
 
-  await AsyncStorage.setItem(USER_PROFILE_KEY, JSON.stringify(profile));
+  const AsyncStorage = await getAsyncStorage();
+  if (AsyncStorage) {
+    await AsyncStorage.setItem(profileStorageKey(userId), JSON.stringify(profile));
+  }
+
+  const { error } = await supabase.from('profiles').upsert(
+    {
+      id: userId,
+      display_name: profile.displayName,
+      avatar_url: profile.avatarUri || profile.photoUrl,
+      height: profile.height,
+      weight: profile.weight,
+      dob: profile.dob,
+      gender: profile.gender,
+      activity_level: profile.activityLevel,
+      primary_goal: profile.primaryGoal,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'id' }
+  );
+  if (error) {
+    console.warn('Skipped Supabase profile upsert', error.message);
+  }
 }
 
 export function initialsFromName(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) {
-    return 'WB';
+    return '?';
   }
   if (parts.length === 1) {
     return parts[0].slice(0, 2).toUpperCase();

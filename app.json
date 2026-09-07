@@ -38,7 +38,7 @@
         "expo-image-picker",
         {
           "photosPermission": "Allow MakanAI to access your photos to set a profile picture.",
-          "cameraPermission": false,
+          "cameraPermission": "Allow MakanAI to access your camera to photograph meals.",
           "microphonePermission": false
         }
       ],
@@ -52,7 +52,8 @@
         }
       ],
       "expo-sharing",
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,

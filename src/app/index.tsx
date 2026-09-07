@@ -1,11 +1,11 @@
 import {
-  BottomSheetBackdrop,
-  BottomSheetModal,
-  BottomSheetScrollView,
-  type BottomSheetBackdropProps,
+    BottomSheetBackdrop,
+    BottomSheetModal,
+    BottomSheetScrollView,
+    type BottomSheetBackdropProps,
 } from '@gorhom/bottom-sheet';
 import DateTimePicker, {
-  type DateTimePickerEvent,
+    type DateTimePickerEvent,
 } from '@react-native-community/datetimepicker';
 import { Image } from 'expo-image';
 import { useFocusEffect } from 'expo-router';
@@ -14,16 +14,16 @@ import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  Alert,
-  Platform,
-  Pressable,
-  SectionList,
-  StyleSheet,
-  Text,
-  View,
-  type ImageStyle,
-  type StyleProp,
-  type ViewStyle,
+    Alert,
+    Platform,
+    Pressable,
+    SectionList,
+    StyleSheet,
+    Text,
+    View,
+    type ImageStyle,
+    type StyleProp,
+    type ViewStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ViewShot, { type ViewShotRef } from 'react-native-view-shot';
@@ -31,9 +31,10 @@ import ViewShot, { type ViewShotRef } from 'react-native-view-shot';
 import { PANDAN, WARM_BEIGE } from '@/constants/brand';
 import { useUploadTask } from '@/context/UploadTaskContext';
 import { DEFAULT_NUTRITION_TARGETS, loadNutritionTargets } from '@/lib/nutrition-targets';
+import { getCurrentUserId } from '@/lib/session-user';
 import i18n, { getDateLocale } from '@/locales/i18n';
-import { supabase } from '../../supabase';
 import type { MealIngredient, MealLog } from '../../types/supabase';
+import { supabase } from '../lib/supabase';
 
 
 const CARD_SHADOW = {
@@ -515,14 +516,29 @@ export default function HomeScreen() {
         }
         setTargets(nextTargets);
 
+        const userId = await getCurrentUserId();
+        if (!userId) {
+          setTodayCalories(0);
+          setTodayProtein(0);
+          setTodayCarbs(0);
+          setTodayFat(0);
+          setMeals([]);
+          setRecordedDays(0);
+          if (!ignore) {
+            setIsFetching(false);
+          }
+          return;
+        }
+
         const [dayResult, daysResult] = await Promise.all([
           supabase
             .from('meal_logs')
             .select(MEAL_COLUMNS)
+            .eq('user_id', userId)
             .gte('created_at', start)
             .lt('created_at', end)
             .order('created_at', { ascending: false }),
-          supabase.from('meal_logs').select('created_at'),
+          supabase.from('meal_logs').select('created_at').eq('user_id', userId),
         ]);
 
         if (ignore) {
@@ -534,6 +550,7 @@ export default function HomeScreen() {
             ? await supabase
                 .from('meal_logs')
                 .select(MEAL_COLUMNS_FALLBACK)
+                .eq('user_id', userId)
                 .gte('created_at', start)
                 .lt('created_at', end)
                 .order('created_at', { ascending: false })
