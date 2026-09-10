@@ -11,6 +11,7 @@ import {
 import { Alert, Platform } from 'react-native';
 
 import i18n from '@/locales/i18n';
+import { captureEvent } from '@/lib/analytics';
 import type { MealIngredient, MealLog } from '../../types/supabase';
 import { SUPABASE_ANON_KEY, SUPABASE_URL, supabase } from '../lib/supabase';
 import { getCurrentUserId } from '@/lib/session-user';
@@ -446,6 +447,14 @@ export function UploadTaskProvider({ children }: { children: ReactNode }) {
       setProcessingImage(imageUri);
       setProcessProgress(6);
 
+      const startedAt = Date.now();
+      const isReplace = Boolean(options?.replaceMealId);
+      const hasNote = Boolean(extraPrompt?.trim());
+      captureEvent('meal_analyze_started', {
+        is_replace: isReplace,
+        has_note: hasNote,
+      });
+
       progressTimerRef.current = setInterval(() => {
         setProcessProgress((current) => {
           if (current >= 80) {
@@ -530,14 +539,36 @@ export function UploadTaskProvider({ children }: { children: ReactNode }) {
         if (mountedRef.current) {
           setProcessProgress(100);
         }
+        captureEvent('meal_analyze_succeeded', {
+          is_replace: isReplace,
+          has_note: hasNote,
+          duration_ms: Date.now() - startedAt,
+        });
+        if (isReplace) {
+          captureEvent('meal_replaced', {
+            has_note: hasNote,
+            duration_ms: Date.now() - startedAt,
+          });
+        }
         await new Promise((resolve) => setTimeout(resolve, 420));
       } catch (error) {
         if (error instanceof SessionChangedError || !mountedRef.current) {
           return;
         }
         if (error instanceof NotFoodError) {
+          captureEvent('meal_not_food', {
+            is_replace: isReplace,
+            has_note: hasNote,
+            duration_ms: Date.now() - startedAt,
+          });
           Alert.alert(i18n.t('notFoodTitle'), i18n.t('notFoodBody'), [{ text: i18n.t('gotIt') }]);
         } else {
+          captureEvent('meal_analyze_failed', {
+            is_replace: isReplace,
+            has_note: hasNote,
+            duration_ms: Date.now() - startedAt,
+            error_type: error instanceof Error ? error.name : 'unknown',
+          });
           console.error('后台处理餐食失败', error);
           Alert.alert(i18n.t('mealNotSaved'), getErrorMessage(error));
         }

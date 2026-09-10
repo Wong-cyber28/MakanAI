@@ -14,6 +14,7 @@ import { Alert, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PANDAN, WARM_BEIGE } from '@/constants/brand';
+import { captureEvent } from '@/lib/analytics';
 import { requestLiveCamera, setPendingMealPhoto } from '@/lib/pending-meal-photo';
 
 type Props = {
@@ -41,15 +42,24 @@ export function AddMealSheet({ sheetRef }: Props) {
     sheetRef.current?.dismiss();
   }, [sheetRef]);
 
+  const handleSheetChange = useCallback((index: number) => {
+    if (index >= 0) {
+      captureEvent('add_meal_opened');
+    }
+  }, []);
+
   const handleTakePhoto = useCallback(() => {
+    captureEvent('add_meal_source_selected', { source: 'camera' });
     requestLiveCamera();
     dismiss();
     router.push('/camera');
   }, [dismiss, router]);
 
   const handleChooseFromGallery = useCallback(async () => {
+    captureEvent('add_meal_source_selected', { source: 'gallery' });
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
+      captureEvent('add_meal_gallery_permission', { granted: false });
       dismiss();
       Alert.alert(t('photoPermissionTitle'), t('galleryPermissionHint'));
       return;
@@ -63,6 +73,7 @@ export function AddMealSheet({ sheetRef }: Props) {
     });
 
     if (result.canceled) {
+      captureEvent('add_meal_gallery_canceled');
       return;
     }
 
@@ -75,6 +86,7 @@ export function AddMealSheet({ sheetRef }: Props) {
       return;
     }
 
+    captureEvent('add_meal_photo_picked', { source: 'gallery' });
     setPendingMealPhoto({ uri, base64 });
     dismiss();
     router.push('/camera');
@@ -85,6 +97,7 @@ export function AddMealSheet({ sheetRef }: Props) {
       ref={sheetRef}
       enableDynamicSizing
       enablePanDownToClose
+      onChange={handleSheetChange}
       backdropComponent={renderBackdrop}
       backgroundStyle={styles.sheetBackground}
       handleIndicatorStyle={styles.handle}>

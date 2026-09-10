@@ -2,6 +2,30 @@ import 'react-native-url-polyfill/auto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import { createClient } from '@supabase/supabase-js';
+import { Platform } from 'react-native';
+
+const isWebPrerender = Platform.OS === 'web' && typeof window === 'undefined';
+
+const authStorage = {
+  getItem: (key: string) => {
+    if (isWebPrerender) {
+      return Promise.resolve(null);
+    }
+    return AsyncStorage.getItem(key);
+  },
+  setItem: (key: string, value: string) => {
+    if (isWebPrerender) {
+      return Promise.resolve();
+    }
+    return AsyncStorage.setItem(key, value);
+  },
+  removeItem: (key: string) => {
+    if (isWebPrerender) {
+      return Promise.resolve();
+    }
+    return AsyncStorage.removeItem(key);
+  },
+};
 
 const extra = (Constants.expoConfig?.extra ?? {}) as {
   supabaseUrl?: string;
@@ -21,7 +45,7 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
-    storage: AsyncStorage,
+    storage: authStorage,
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: false,

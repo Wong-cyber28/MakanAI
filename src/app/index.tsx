@@ -8,7 +8,7 @@ import DateTimePicker, {
     type DateTimePickerEvent,
 } from '@react-native-community/datetimepicker';
 import { Image } from 'expo-image';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -31,6 +31,7 @@ import ViewShot, { type ViewShotRef } from 'react-native-view-shot';
 import { PANDAN, WARM_BEIGE } from '@/constants/brand';
 import { useUploadTask } from '@/context/UploadTaskContext';
 import { DEFAULT_NUTRITION_TARGETS, loadNutritionTargets } from '@/lib/nutrition-targets';
+import { requestFixMeal } from '@/lib/pending-meal-photo';
 import { getCurrentUserId } from '@/lib/session-user';
 import i18n, { getDateLocale } from '@/locales/i18n';
 import type { MealIngredient, MealLog } from '../../types/supabase';
@@ -248,14 +249,43 @@ function parseIngredientList(value: unknown): MealIngredient[] {
 }
 
 const MEAL_COLUMNS =
+  'id, dish_name, total_calories, macros, ingredients, extra_note, image_url, created_at';
+const MEAL_COLUMNS_NO_NOTE =
   'id, dish_name, total_calories, macros, ingredients, image_url, created_at';
 const MEAL_COLUMNS_FALLBACK = 'id, dish_name, total_calories, macros, image_url, created_at';
 
-function missingIngredientsColumn(error: { message?: string; details?: string; hint?: string } | null) {
+function missingColumn(
+  error: { message?: string; details?: string; hint?: string } | null,
+  column: string
+) {
   if (!error) {
     return false;
   }
-  return /ingredients/i.test(`${error.message ?? ''} ${error.details ?? ''} ${error.hint ?? ''}`);
+  return new RegExp(column, 'i').test(`${error.message ?? ''} ${error.details ?? ''} ${error.hint ?? ''}`);
+}
+
+function readExtraNote(meal: MealLog | null | undefined): string {
+  if (!meal) {
+    return '';
+  }
+
+  if (typeof meal.extra_note === 'string' && meal.extra_note.trim()) {
+    return meal.extra_note.trim();
+  }
+
+  try {
+    const macros =
+      typeof meal.macros === 'string'
+        ? (JSON.parse(meal.macros) as { extra_note?: unknown; note?: unknown })
+        : (meal.macros as { extra_note?: unknown; note?: unknown } | null | undefined);
+    const fromMacros =
+      (typeof macros?.extra_note === 'string' && macros.extra_note) ||
+      (typeof macros?.note === 'string' && macros.note) ||
+      '';
+    return fromMacros.trim();
+  } catch {
+    return '';
+  }
 }
 
 function mealPhotoUrl(value?: string | null) {
@@ -382,6 +412,7 @@ function MacroMiniCard({
 
 export default function HomeScreen() {
   const { t } = useTranslation();
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   const [recordedDays, setRecordedDays] = useState(0);
   const [todayCalories, setTodayCalories] = useState(0);
@@ -428,8 +459,70 @@ export default function HomeScreen() {
   }, []);
 
   const handleFixResults = useCallback(() => {
-    console.log('触发重新分析');
-  }, []);
+    if (!selectedMeal?.id) {
+      return;
+    }
+
+    const imageUrl = mealPhotoUrl(selectedMeal.image_url);
+    if (!imageUrl) {
+      Alert.alert(t('captureFailed'), t('captureFailedHint'));
+      return;
+    }
+
+    requestFixMeal({
+      mealId: selectedMeal.id,
+      imageUrl,
+      extraNote: readExtraNote(selectedMeal),
+    });
+    mealSheetRef.current?.dismiss();
+    router.push('/camera');
+  }, [router, selectedMeal, t]);
+
+  const handleDeleteMeal = useCallback(() => {
+    if (!selectedMeal?.id) {
+      return;
+    }
+
+    Alert.alert(t('deleteMeal'), t('deleteMealConfirm'), [
+      { text: t('cancel'), style: 'cancel' },
+      {
+        text: t('delete'),
+        style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            try {
+              const userId = await getCurrentUserId();
+              if (!userId) {
+                throw new Error('Not signed in');
+              }
+
+              const { error } = await supabase
+                .from('meal_logs')
+                .delete()
+                .eq('id', selectedMeal.id)
+                .eq('user_id', userId);
+
+              if (error) {
+                throw error;
+              }
+
+              setMeals((current) => current.filter((meal) => meal.id !== selectedMeal.id));
+              setTodayCalories((current) => current - (Number(selectedMeal.total_calories) || 0));
+              const macros = readMacros(selectedMeal.macros);
+              setTodayProtein((current) => current - macros.protein);
+              setTodayCarbs((current) => current - macros.carbs);
+              setTodayFat((current) => current - macros.fat);
+              mealSheetRef.current?.dismiss();
+              setSelectedMeal(null);
+            } catch (error) {
+              console.error('删除餐食失败', error);
+              Alert.alert(t('deleteMeal'), t('deleteMealFailed'));
+            }
+          })();
+        },
+      },
+    ]);
+  }, [selectedMeal, t]);
 
   const handleShareMeal = useCallback(async () => {
     try {
@@ -545,8 +638,16 @@ export default function HomeScreen() {
           return;
         }
 
-        const dayRows =
-          dayResult.error && missingIngredientsColumn(dayResult.error)
+          const dayRows =
+          dayResult.error && missingColumn(dayResult.error, 'extra_note')
+            ? await supabase
+                .from('meal_logs')
+                .select(MEAL_COLUMNS_NO_NOTE)
+                .eq('user_id', userId)
+                .gte('created_at', start)
+                .lt('created_at', end)
+                .order('created_at', { ascending: false })
+            : dayResult.error && missingColumn(dayResult.error, 'ingredients')
             ? await supabase
                 .from('meal_logs')
                 .select(MEAL_COLUMNS_FALLBACK)
@@ -596,6 +697,7 @@ export default function HomeScreen() {
     ? Math.round(Number(selectedMeal.total_calories) || 0)
     : 0;
   const selectedIngredients = readIngredients(selectedMeal);
+  const selectedNote = readExtraNote(selectedMeal);
   const mealSections = useMemo(() => groupByDate(meals), [meals, t]);
   const viewingToday = isSameLocalDay(selectedDate, new Date());
   const canGoForward = !viewingToday;
@@ -859,6 +961,13 @@ export default function HomeScreen() {
               </ViewShot>
 
               <View style={styles.sheetBody}>
+                {selectedNote ? (
+                  <View style={styles.noteBlock}>
+                    <Text style={styles.noteHeading}>{t('yourNote')}</Text>
+                    <Text style={styles.noteBody}>{selectedNote}</Text>
+                  </View>
+                ) : null}
+
                 {selectedIngredients.length > 0 ? (
                   <>
                     <Text style={styles.ingredientsHeading}>{t('ingredients')}</Text>
@@ -891,6 +1000,11 @@ export default function HomeScreen() {
                   }}
                   style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}>
                   <Text style={styles.primaryButtonText}>📤 {t('share')}</Text>
+                </Pressable>
+                <Pressable
+                  onPress={handleDeleteMeal}
+                  style={({ pressed }) => [styles.deleteButton, pressed && styles.pressed]}>
+                  <Text style={styles.deleteButtonText}>{t('deleteMeal')}</Text>
                 </Pressable>
               </View>
             </>
@@ -1425,6 +1539,33 @@ const styles = StyleSheet.create({
     backgroundColor: PANDAN,
   },
   primaryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  noteBlock: {
+    marginBottom: 22,
+  },
+  noteHeading: {
+    color: '#2C2A26',
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  noteBody: {
+    color: '#6B6560',
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  deleteButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 15,
+    borderRadius: 999,
+    backgroundColor: '#C2453D',
+    marginTop: 10,
+  },
+  deleteButtonText: {
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',

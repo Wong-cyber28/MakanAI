@@ -23,7 +23,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PANDAN } from '@/constants/brand';
 import { useUploadTask } from '@/context/UploadTaskContext';
-import { consumePendingMealIntent } from '@/lib/pending-meal-photo';
+import { captureEvent } from '@/lib/analytics';
+import { consumePendingMealIntent, fetchImageAsBase64 } from '@/lib/pending-meal-photo';
 
 type CapturedPhoto = {
   uri: string;
@@ -43,6 +44,8 @@ export default function CameraScreen() {
   const cameraRef = useRef<CameraView>(null);
   const capturingRef = useRef(false);
   const sendingRef = useRef(false);
+  const replaceMealIdRef = useRef<string | null>(null);
+  const sourceRef = useRef<'camera' | 'gallery' | 'fix'>('camera');
   const [permission, requestPermission, getPermission] = useCameraPermissions();
   const [isCapturing, setIsCapturing] = useState(false);
   const [capturedPhoto, setCapturedPhoto] = useState<CapturedPhoto | null>(null);
@@ -60,9 +63,11 @@ export default function CameraScreen() {
       capturingRef.current = false;
       sendingRef.current = false;
       setIsCapturing(false);
-      setExtraPrompt('');
 
       if (pending.kind === 'photo') {
+        sourceRef.current = 'gallery';
+        replaceMealIdRef.current = null;
+        setExtraPrompt('');
         setCapturedPhoto({
           uri: pending.uri,
           base64: pending.base64,
@@ -70,8 +75,32 @@ export default function CameraScreen() {
         return;
       }
 
+      if (pending.kind === 'fix') {
+        sourceRef.current = 'fix';
+        replaceMealIdRef.current = pending.mealId;
+        setExtraPrompt(pending.extraNote);
+        setCapturedPhoto({
+          uri: pending.imageUrl,
+          base64: '',
+        });
+        void fetchImageAsBase64(pending.imageUrl)
+          .then((base64) => {
+            setCapturedPhoto((current) =>
+              current && current.uri === pending.imageUrl ? { uri: pending.imageUrl, base64 } : current
+            );
+          })
+          .catch((error) => {
+            console.error('读取原餐图失败', error);
+            Alert.alert(t('captureFailed'), t('captureFailedHint'));
+          });
+        return;
+      }
+
+      replaceMealIdRef.current = null;
+      setExtraPrompt('');
       setCapturedPhoto(null);
-    }, [])
+      sourceRef.current = 'camera';
+    }, [t])
   );
 
   useFocusEffect(
@@ -99,9 +128,11 @@ export default function CameraScreen() {
 
       const result = await requestPermission();
       if (result.granted) {
+        captureEvent('camera_permission', { granted: true });
         return;
       }
 
+      captureEvent('camera_permission', { granted: false });
       if (result.canAskAgain === false) {
         await Linking.openSettings();
         await getPermission();
@@ -117,12 +148,14 @@ export default function CameraScreen() {
   }, [router]);
 
   const handleRetake = useCallback(() => {
+    captureEvent('photo_retaken', { source: sourceRef.current });
     Keyboard.dismiss();
     capturingRef.current = false;
     sendingRef.current = false;
     setIsCapturing(false);
     setCapturedPhoto(null);
     setExtraPrompt('');
+    sourceRef.current = 'camera';
   }, []);
 
   const handleSend = useCallback(() => {
@@ -135,13 +168,33 @@ export default function CameraScreen() {
     Keyboard.dismiss();
 
     const note = extraPrompt.trim();
-    void startProcessingTask(
-      capturedPhoto.uri,
-      capturedPhoto.base64,
-      note.length > 0 ? note : undefined
-    );
-    router.replace('/');
-  }, [capturedPhoto, extraPrompt, router, startProcessingTask]);
+    const replaceMealId = replaceMealIdRef.current ?? undefined;
+    const reuseImageUrl = capturedPhoto.uri.startsWith('http') ? capturedPhoto.uri : undefined;
+    captureEvent('meal_submit_tapped', {
+      source: sourceRef.current,
+      has_note: note.length > 0,
+      is_replace: Boolean(replaceMealId),
+    });
+
+    void (async () => {
+      try {
+        let base64 = capturedPhoto.base64;
+        if (!base64) {
+          base64 = await fetchImageAsBase64(capturedPhoto.uri);
+        }
+
+        void startProcessingTask(capturedPhoto.uri, base64, note.length > 0 ? note : undefined, {
+          replaceMealId,
+          reuseImageUrl,
+        });
+        router.replace('/');
+      } catch (error) {
+        console.error('重新分析失败', error);
+        Alert.alert(t('captureFailed'), t('captureFailedHint'));
+        sendingRef.current = false;
+      }
+    })();
+  }, [capturedPhoto, extraPrompt, router, startProcessingTask, t]);
 
   const handleCapture = useCallback(async () => {
     const camera = cameraRef.current;
@@ -165,11 +218,13 @@ export default function CameraScreen() {
         return;
       }
 
+      sourceRef.current = 'camera';
       setCapturedPhoto({
         uri: photo.uri ?? `data:image/jpeg;base64,${photo.base64}`,
         base64: photo.base64,
       });
       setExtraPrompt('');
+      captureEvent('photo_captured', { source: 'camera' });
     } catch (error) {
       console.error('拍照失败', error);
       Alert.alert(t('captureFailed'), t('cameraBusy'));

@@ -16,6 +16,7 @@ export type MealLog = {
   total_calories: number;
   macros: MealMacros;
   ingredients?: MealIngredient[] | string | null;
+  extra_note?: string | null;
   image_url?: string | null;
   created_at?: string;
 };

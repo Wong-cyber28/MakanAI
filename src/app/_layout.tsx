@@ -1,9 +1,10 @@
 import '../locales/i18n';
 
 import { BottomSheetModal, BottomSheetModalProvider } from '@gorhom/bottom-sheet';
-import { Tabs } from 'expo-router';
+import { Tabs, usePathname } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { SymbolView } from 'expo-symbols';
+import { PostHogProvider, usePostHog } from 'posthog-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Modal, Pressable, StyleSheet, View } from 'react-native';
@@ -13,12 +14,66 @@ import { AddMealSheet } from '@/components/add-meal-sheet';
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { MUTED_ICON, PANDAN, WARM_BEIGE } from '@/constants/brand';
 import { UploadTaskProvider } from '@/context/UploadTaskContext';
+import { bindAnalyticsClient } from '@/lib/analytics';
 import { supabase } from '@/lib/supabase';
 import LoginScreen from './login';
 
 export { ErrorBoundary } from 'expo-router';
 
 SplashScreen.preventAutoHideAsync();
+
+function PostHogSessionBinder({
+  authReady,
+  isSignedIn,
+  userId,
+}: {
+  authReady: boolean;
+  isSignedIn: boolean;
+  userId: string | null;
+}) {
+  const posthog = usePostHog();
+  const pathname = usePathname();
+  const identifiedUserIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    bindAnalyticsClient(posthog ?? null);
+    return () => bindAnalyticsClient(null);
+  }, [posthog]);
+
+  useEffect(() => {
+    if (!posthog) {
+      return;
+    }
+
+    const screen = authReady && !isSignedIn ? '/login' : pathname;
+    if (!screen) {
+      return;
+    }
+
+    posthog.screen(screen);
+  }, [authReady, isSignedIn, pathname, posthog]);
+
+  useEffect(() => {
+    if (!authReady || !posthog) {
+      return;
+    }
+
+    if (userId) {
+      if (identifiedUserIdRef.current !== userId) {
+        posthog.identify(userId);
+        identifiedUserIdRef.current = userId;
+      }
+      return;
+    }
+
+    if (identifiedUserIdRef.current) {
+      posthog.reset();
+      identifiedUserIdRef.current = null;
+    }
+  }, [authReady, posthog, userId]);
+
+  return null;
+}
 
 function CameraFab({
   onPress,
@@ -95,6 +150,21 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={styles.root}>
+      <PostHogProvider
+        apiKey={process.env.EXPO_PUBLIC_POSTHOG_API_KEY}
+        options={{
+          host: process.env.EXPO_PUBLIC_POSTHOG_HOST,
+          enableSessionReplay: false,
+        }}
+        autocapture={{
+          captureTouches: false,
+          captureScreens: false,
+        }}>
+        <PostHogSessionBinder
+          authReady={authReady}
+          isSignedIn={isSignedIn}
+          userId={sessionUserId}
+        />
       <BottomSheetModalProvider>
         <AnimatedSplashOverlay />
         <UploadTaskProvider key={sessionUserId ?? 'signed-out'}>
@@ -174,6 +244,7 @@ export default function RootLayout() {
           <LoginScreen onContinue={handleLoginContinue} />
         </Modal>
       </BottomSheetModalProvider>
+      </PostHogProvider>
     </GestureHandlerRootView>
   );
 }
