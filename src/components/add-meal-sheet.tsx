@@ -14,6 +14,7 @@ import { Alert, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PANDAN, WARM_BEIGE } from '@/constants/brand';
+import { useUploadTask } from '@/context/UploadTaskContext';
 import { captureEvent } from '@/lib/analytics';
 import { requestLiveCamera, setPendingMealPhoto } from '@/lib/pending-meal-photo';
 
@@ -37,6 +38,7 @@ export function AddMealSheet({ sheetRef }: Props) {
   const { t } = useTranslation();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { isProcessing } = useUploadTask();
 
   const dismiss = useCallback(() => {
     sheetRef.current?.dismiss();
@@ -49,13 +51,19 @@ export function AddMealSheet({ sheetRef }: Props) {
   }, []);
 
   const handleTakePhoto = useCallback(() => {
+    if (isProcessing) {
+      return;
+    }
     captureEvent('add_meal_source_selected', { source: 'camera' });
     requestLiveCamera();
     dismiss();
     router.push('/camera');
-  }, [dismiss, router]);
+  }, [dismiss, isProcessing, router]);
 
   const handleChooseFromGallery = useCallback(async () => {
+    if (isProcessing) {
+      return;
+    }
     captureEvent('add_meal_source_selected', { source: 'gallery' });
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
@@ -90,7 +98,7 @@ export function AddMealSheet({ sheetRef }: Props) {
     setPendingMealPhoto({ uri, base64 });
     dismiss();
     router.push('/camera');
-  }, [dismiss, router, t]);
+  }, [dismiss, isProcessing, router, t]);
 
   return (
     <BottomSheetModal
@@ -108,9 +116,11 @@ export function AddMealSheet({ sheetRef }: Props) {
         <TouchableOpacity
           accessibilityRole="button"
           accessibilityLabel={t('takeAPhoto')}
+          accessibilityState={{ disabled: isProcessing }}
           activeOpacity={0.82}
+          disabled={isProcessing}
           onPress={handleTakePhoto}
-          style={styles.option}>
+          style={[styles.option, isProcessing && styles.optionDisabled]}>
           <View style={styles.iconWell}>
             <SymbolView
               name={{ ios: 'camera.fill', android: 'photo_camera', web: 'camera' }}
@@ -124,11 +134,13 @@ export function AddMealSheet({ sheetRef }: Props) {
         <TouchableOpacity
           accessibilityRole="button"
           accessibilityLabel={t('chooseFromGallery')}
+          accessibilityState={{ disabled: isProcessing }}
           activeOpacity={0.82}
+          disabled={isProcessing}
           onPress={() => {
             void handleChooseFromGallery();
           }}
-          style={styles.option}>
+          style={[styles.option, isProcessing && styles.optionDisabled]}>
           <View style={styles.iconWell}>
             <SymbolView
               name={{ ios: 'photo.on.rectangle', android: 'photo_library', web: 'image' }}
@@ -177,6 +189,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 12,
     elevation: 2,
+  },
+  optionDisabled: {
+    opacity: 0.45,
   },
   iconWell: {
     width: 48,

@@ -16,8 +16,6 @@ const NESTED_SETTINGS_ROUTES = [
   'personal-details',
   'nutrition-goals',
   'history',
-  'terms',
-  'privacy',
 ] as const;
 
 export default function SettingsLayout() {
@@ -51,8 +49,6 @@ export default function SettingsLayout() {
       <Stack.Screen name="personal-details" options={{ title: t('personalDetails') }} />
       <Stack.Screen name="nutrition-goals" options={{ title: t('nutritionGoals') }} />
       <Stack.Screen name="history" options={{ title: t('history'), headerRight: () => null }} />
-      <Stack.Screen name="terms" options={{ title: t('termsAndConditions') }} />
-      <Stack.Screen name="privacy" options={{ title: t('privacyPolicy') }} />
     </Stack>
   );
 }

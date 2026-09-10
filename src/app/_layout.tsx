@@ -13,7 +13,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AddMealSheet } from '@/components/add-meal-sheet';
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { MUTED_ICON, PANDAN, WARM_BEIGE } from '@/constants/brand';
-import { UploadTaskProvider } from '@/context/UploadTaskContext';
+import { UploadTaskProvider, useUploadTask } from '@/context/UploadTaskContext';
 import { bindAnalyticsClient } from '@/lib/analytics';
 import { supabase } from '@/lib/supabase';
 import LoginScreen from './login';
@@ -84,16 +84,18 @@ function CameraFab({
   accessibilityLabel: string;
   accessibilityState?: { selected?: boolean };
 }) {
+  const { isProcessing } = useUploadTask();
   const selected = accessibilityState?.selected === true;
 
   return (
     <Pressable
-      onPress={onPress}
+      onPress={isProcessing ? undefined : onPress}
+      disabled={isProcessing}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
-      accessibilityState={accessibilityState}
+      accessibilityState={{ ...accessibilityState, disabled: isProcessing }}
       style={styles.fabWrap}>
-      <View style={[styles.fab, selected && styles.fabSelected]}>
+      <View style={[styles.fab, selected && styles.fabSelected, isProcessing && styles.fabDisabled]}>
         <SymbolView
           name={{ ios: 'camera.fill', android: 'photo_camera', web: 'camera' }}
           tintColor="#ffffff"
@@ -274,5 +276,10 @@ const styles = StyleSheet.create({
   },
   fabSelected: {
     transform: [{ scale: 1.04 }],
+  },
+  fabDisabled: {
+    backgroundColor: MUTED_ICON,
+    shadowOpacity: 0,
+    elevation: 0,
   },
 });

@@ -459,7 +459,7 @@ export default function HomeScreen() {
   }, []);
 
   const handleFixResults = useCallback(() => {
-    if (!selectedMeal?.id) {
+    if (isProcessing || !selectedMeal?.id) {
       return;
     }
 
@@ -476,7 +476,7 @@ export default function HomeScreen() {
     });
     mealSheetRef.current?.dismiss();
     router.push('/camera');
-  }, [router, selectedMeal, t]);
+  }, [isProcessing, router, selectedMeal, t]);
 
   const handleDeleteMeal = useCallback(() => {
     if (!selectedMeal?.id) {
@@ -991,8 +991,15 @@ export default function HomeScreen() {
 
                 <Pressable
                   onPress={handleFixResults}
-                  style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}>
-                  <Text style={styles.secondaryButtonText}>{t('fixResults')}</Text>
+                  disabled={isProcessing}
+                  style={({ pressed }) => [
+                    styles.secondaryButton,
+                    isProcessing && styles.secondaryButtonDisabled,
+                    pressed && !isProcessing && styles.pressed,
+                  ]}>
+                  <Text style={[styles.secondaryButtonText, isProcessing && styles.secondaryButtonTextDisabled]}>
+                    {t('fixResults')}
+                  </Text>
                 </Pressable>
                 <Pressable
                   onPress={() => {
@@ -1526,10 +1533,16 @@ const styles = StyleSheet.create({
     backgroundColor: '#F3EEE6',
     marginBottom: 10,
   },
+  secondaryButtonDisabled: {
+    opacity: 0.45,
+  },
   secondaryButtonText: {
     color: '#2C2A26',
     fontSize: 16,
     fontWeight: '600',
+  },
+  secondaryButtonTextDisabled: {
+    color: '#8A847A',
   },
   primaryButton: {
     alignItems: 'center',

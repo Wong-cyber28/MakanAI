@@ -51,7 +51,7 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Allow MakanAI to access your photos to set a profile picture.",
+          "photosPermission": "Allow MakanAI to access your photos to log meals from your gallery and set a profile picture.",
           "cameraPermission": "Allow MakanAI to access your camera to photograph meals.",
           "microphonePermission": false
         }
