@@ -6,6 +6,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as WebBrowser from 'expo-web-browser';
+import { useTranslation } from 'react-i18next';
 import { ActivityIndicator, Alert, ImageBackground, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -51,6 +52,7 @@ async function createSessionFromUrl(url: string) {
 }
 
 export default function LoginScreen({ onContinue }: LoginScreenProps = {}) {
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -79,7 +81,7 @@ export default function LoginScreen({ onContinue }: LoginScreenProps = {}) {
         throw error;
       }
       if (!data.url) {
-        throw new Error('Google sign-in did not return an auth URL.');
+        throw new Error(t('googleSignInNoUrl'));
       }
 
       const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
@@ -89,20 +91,20 @@ export default function LoginScreen({ onContinue }: LoginScreenProps = {}) {
 
       const session = await createSessionFromUrl(result.url);
       if (!session) {
-        throw new Error('Could not create a session from Google sign-in.');
+        throw new Error(t('googleSignInNoSession'));
       }
 
       finishLogin();
     } catch (err) {
       console.error('Failed Google OAuth:', err);
       Alert.alert(
-        'Sign in failed',
-        err instanceof Error ? err.message : 'Please try again.'
+        t('signInFailed'),
+        err instanceof Error ? err.message : t('pleaseTryAgain')
       );
     } finally {
       setLoading(false);
     }
-  }, [finishLogin]);
+  }, [finishLogin, t]);
 
   return (
     <ImageBackground
@@ -134,13 +136,13 @@ export default function LoginScreen({ onContinue }: LoginScreenProps = {}) {
       >
         <View style={styles.header}>
           <Text style={styles.title}>MakanAI</Text>
-          <Text style={styles.subtitle}>Makan first? Scan first!</Text>
+          <Text style={styles.subtitle}>{t('loginTagline')}</Text>
         </View>
 
         <View style={styles.footer}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Continue with Google"
+            accessibilityLabel={t('continueWithGoogle')}
             onPress={signInWithGoogle}
             disabled={loading}
             style={({ pressed }) => [
@@ -153,14 +155,14 @@ export default function LoginScreen({ onContinue }: LoginScreenProps = {}) {
             {loading ? (
               <>
                 <ActivityIndicator size="small" color="#4285F4" style={{ marginRight: 8 }} />
-                <Text style={styles.googleButtonText}>Signing in...</Text>
+                <Text style={styles.googleButtonText}>{t('signingIn')}</Text>
               </>
             ) : (
-              <Text style={styles.googleButtonText}>Continue with Google</Text>
+              <Text style={styles.googleButtonText}>{t('continueWithGoogle')}</Text>
             )}
           </Pressable>
           <Text style={styles.disclaimer}>
-            By continuing, you agree to our Terms of Service.
+            {t('loginDisclaimer')}
           </Text>
         </View>
       </View>

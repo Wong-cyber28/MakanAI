@@ -29,7 +29,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ViewShot, { type ViewShotRef } from 'react-native-view-shot';
 
 import { PANDAN, WARM_BEIGE } from '@/constants/brand';
-import { useUploadTask } from '@/context/UploadTaskContext';
+import { useUploadTask, removeMealImage } from '@/context/UploadTaskContext';
+import { EditMealForm, type EditableMealValues } from '@/components/edit-meal-form';
 import { DEFAULT_NUTRITION_TARGETS, loadNutritionTargets } from '@/lib/nutrition-targets';
 import { requestFixMeal } from '@/lib/pending-meal-photo';
 import { getCurrentUserId } from '@/lib/session-user';
@@ -248,6 +249,15 @@ function parseIngredientList(value: unknown): MealIngredient[] {
   }
 }
 
+function totalsFromMeals(rows: MealLog[]) {
+  return {
+    calories: rows.reduce((sum, row) => sum + (Number(row.total_calories) || 0), 0),
+    protein: rows.reduce((sum, row) => sum + readMacros(row.macros).protein, 0),
+    carbs: rows.reduce((sum, row) => sum + readMacros(row.macros).carbs, 0),
+    fat: rows.reduce((sum, row) => sum + readMacros(row.macros).fat, 0),
+  };
+}
+
 const MEAL_COLUMNS =
   'id, dish_name, total_calories, macros, ingredients, extra_note, image_url, created_at';
 const MEAL_COLUMNS_NO_NOTE =
@@ -425,6 +435,9 @@ export default function HomeScreen() {
   const [selectedDate, setSelectedDate] = useState(() => startOfLocalDay(new Date()));
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [isFetching, setIsFetching] = useState(true);
+  const [fetchError, setFetchError] = useState(false);
+  const [isEditingMeal, setIsEditingMeal] = useState(false);
+  const [isSavingMeal, setIsSavingMeal] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const mealSheetRef = useRef<BottomSheetModal>(null);
   const viewShotRef = useRef<ViewShotRef>(null);
@@ -435,6 +448,7 @@ export default function HomeScreen() {
   const handleSheetChange = useCallback((index: number) => {
     if (index === -1) {
       setSelectedMeal(null);
+      setIsEditingMeal(false);
     }
   }, []);
 
@@ -453,6 +467,7 @@ export default function HomeScreen() {
 
   const openMealDetails = useCallback((meal: MealLog) => {
     setSelectedMeal(meal);
+    setIsEditingMeal(false);
     requestAnimationFrame(() => {
       mealSheetRef.current?.present();
     });
@@ -506,14 +521,22 @@ export default function HomeScreen() {
                 throw error;
               }
 
-              setMeals((current) => current.filter((meal) => meal.id !== selectedMeal.id));
-              setTodayCalories((current) => current - (Number(selectedMeal.total_calories) || 0));
-              const macros = readMacros(selectedMeal.macros);
-              setTodayProtein((current) => current - macros.protein);
-              setTodayCarbs((current) => current - macros.carbs);
-              setTodayFat((current) => current - macros.fat);
+              const remaining = meals.filter((meal) => meal.id !== selectedMeal.id);
+              const totals = totalsFromMeals(remaining);
+              setMeals(remaining);
+              setTodayCalories(totals.calories);
+              setTodayProtein(totals.protein);
+              setTodayCarbs(totals.carbs);
+              setTodayFat(totals.fat);
               mealSheetRef.current?.dismiss();
               setSelectedMeal(null);
+              setIsEditingMeal(false);
+
+              try {
+                await removeMealImage(selectedMeal.image_url);
+              } catch (storageError) {
+                console.warn('删除餐食图片失败', storageError);
+              }
             } catch (error) {
               console.error('删除餐食失败', error);
               Alert.alert(t('deleteMeal'), t('deleteMealFailed'));
@@ -522,7 +545,93 @@ export default function HomeScreen() {
         },
       },
     ]);
-  }, [selectedMeal, t]);
+  }, [meals, selectedMeal, t]);
+
+  const handleRetryFetch = useCallback(() => {
+    setIsFetching(true);
+    setFetchError(false);
+    setRefreshKey((current) => current + 1);
+  }, []);
+
+  const handleSaveMeal = useCallback(
+    async (values: EditableMealValues) => {
+      if (!selectedMeal?.id || isSavingMeal) {
+        return;
+      }
+
+      setIsSavingMeal(true);
+      try {
+        const userId = await getCurrentUserId();
+        if (!userId) {
+          throw new Error('Not signed in');
+        }
+
+        const previousMacros =
+          typeof selectedMeal.macros === 'string'
+            ? (() => {
+                try {
+                  return JSON.parse(selectedMeal.macros) as Record<string, unknown>;
+                } catch {
+                  return {};
+                }
+              })()
+            : ((selectedMeal.macros as Record<string, unknown> | null | undefined) ?? {});
+
+        const row = {
+          dish_name: values.dish_name,
+          total_calories: values.total_calories,
+          macros: {
+            ...(previousMacros && typeof previousMacros === 'object' ? previousMacros : {}),
+            protein: values.macros.protein,
+            carbs: values.macros.carbs,
+            fat: values.macros.fat,
+            ingredients: values.ingredients,
+          },
+          ingredients: values.ingredients,
+        };
+
+        let { error } = await supabase
+          .from('meal_logs')
+          .update(row)
+          .eq('id', selectedMeal.id)
+          .eq('user_id', userId);
+
+        if (missingColumn(error, 'ingredients')) {
+          const { ingredients: _ignored, ...withoutIngredients } = row;
+          const fallback = await supabase
+            .from('meal_logs')
+            .update(withoutIngredients)
+            .eq('id', selectedMeal.id)
+            .eq('user_id', userId);
+          error = fallback.error;
+        }
+
+        if (error) {
+          throw error;
+        }
+
+        const updated: MealLog = {
+          ...selectedMeal,
+          ...row,
+        };
+        const nextMeals = meals.map((meal) => (meal.id === selectedMeal.id ? updated : meal));
+        const totals = totalsFromMeals(nextMeals);
+        setMeals(nextMeals);
+        setTodayCalories(totals.calories);
+        setTodayProtein(totals.protein);
+        setTodayCarbs(totals.carbs);
+        setTodayFat(totals.fat);
+        setSelectedMeal(updated);
+        setIsEditingMeal(false);
+      } catch (error) {
+        console.error('保存餐食失败', error);
+        Alert.alert(t('edit'), t('saveFailed'));
+      } finally {
+        setIsSavingMeal(false);
+      }
+    },
+    [isSavingMeal, meals, selectedMeal, t]
+  );
 
   const handleShareMeal = useCallback(async () => {
     try {
@@ -617,6 +726,7 @@ export default function HomeScreen() {
           setTodayFat(0);
           setMeals([]);
           setRecordedDays(0);
+          setFetchError(false);
           if (!ignore) {
             setIsFetching(false);
           }
@@ -663,13 +773,16 @@ export default function HomeScreen() {
 
         if (dayRows.error) {
           console.error('读取当日餐食失败', dayRows.error);
+          setFetchError(true);
         } else {
           const rows = (dayRows.data ?? []) as MealLog[];
-          setTodayCalories(rows.reduce((sum, row) => sum + (Number(row.total_calories) || 0), 0));
-          setTodayProtein(rows.reduce((sum, row) => sum + readMacros(row.macros).protein, 0));
-          setTodayCarbs(rows.reduce((sum, row) => sum + readMacros(row.macros).carbs, 0));
-          setTodayFat(rows.reduce((sum, row) => sum + readMacros(row.macros).fat, 0));
+          const totals = totalsFromMeals(rows);
+          setTodayCalories(totals.calories);
+          setTodayProtein(totals.protein);
+          setTodayCarbs(totals.carbs);
+          setTodayFat(totals.fat);
           setMeals(rows);
+          setFetchError(false);
         }
 
         if (daysResult.error) {
@@ -749,6 +862,7 @@ export default function HomeScreen() {
               <View style={styles.calorieCopy}>
                 <Text style={styles.calorieValue}>{Math.round(todayCalories)}</Text>
                 <Text style={styles.calorieTarget}>/ {Math.round(targets.calories)} kcal</Text>
+                <Text style={styles.calorieEstimate}>{t('estimate')}</Text>
               </View>
               <RingProgress
                 progress={progressRatio(todayCalories, targets.calories)}
@@ -797,6 +911,18 @@ export default function HomeScreen() {
                 {viewingToday ? t('recentlyUploaded') : t('thisDay')}
               </Text>
             </View>
+
+            {fetchError && !isFetching && meals.length > 0 ? (
+              <View style={styles.loadErrorCard}>
+                <Text style={styles.loadErrorText}>{t('couldntLoadMeals')}</Text>
+                <Pressable
+                  onPress={handleRetryFetch}
+                  hitSlop={8}
+                  style={({ pressed }) => pressed && styles.pressed}>
+                  <Text style={styles.loadErrorRetry}>{t('retry')}</Text>
+                </Pressable>
+              </View>
+            ) : null}
 
             {viewingToday && isProcessing ? (
               <View style={styles.processingCard}>
@@ -885,6 +1011,17 @@ export default function HomeScreen() {
                 </View>
               ))}
             </View>
+          ) : fetchError ? (
+            <View style={styles.emptyWrap}>
+              <View style={styles.emptyCard}>
+                <Text style={styles.emptyText}>{t('couldntLoadMeals')}</Text>
+                <Pressable
+                  onPress={handleRetryFetch}
+                  style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}>
+                  <Text style={styles.retryButtonText}>{t('retry')}</Text>
+                </Pressable>
+              </View>
+            </View>
           ) : viewingToday && isProcessing ? null : (
             <View style={styles.emptyWrap}>
               <View style={styles.emptyCard}>
@@ -904,7 +1041,10 @@ export default function HomeScreen() {
         enableDynamicSizing={false}
         enablePanDownToClose
         onChange={handleSheetChange}
-        onDismiss={() => setSelectedMeal(null)}
+        onDismiss={() => {
+          setSelectedMeal(null);
+          setIsEditingMeal(false);
+        }}
         backdropComponent={renderBackdrop}
         backgroundStyle={styles.sheetBackground}
         handleIndicatorStyle={styles.sheetHandle}>
@@ -913,6 +1053,7 @@ export default function HomeScreen() {
             styles.sheetScrollContent,
             { paddingBottom: Math.max(insets.bottom, 20) + 8 },
           ]}
+          keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}>
           {selectedMeal && selectedMacros ? (
             <>
@@ -931,6 +1072,7 @@ export default function HomeScreen() {
                   />
                 </View>
 
+                {isEditingMeal ? null : (
                 <View style={styles.shareCardBody}>
                   <Text style={styles.sheetTitle}>{selectedMeal.dish_name}</Text>
                   <Text style={styles.sheetTime}>{formatLogTime(selectedMeal.created_at)}</Text>
@@ -958,9 +1100,27 @@ export default function HomeScreen() {
 
                   <Text style={styles.shareWatermark}>{t('recordedWithMakanAI')}</Text>
                 </View>
+                )}
               </ViewShot>
 
               <View style={styles.sheetBody}>
+                {isEditingMeal ? (
+                  <EditMealForm
+                    key={selectedMeal.id}
+                    initialName={selectedMeal.dish_name}
+                    initialCalories={selectedCalories}
+                    initialProtein={selectedMacros.protein}
+                    initialCarbs={selectedMacros.carbs}
+                    initialFat={selectedMacros.fat}
+                    initialIngredients={selectedIngredients}
+                    isSaving={isSavingMeal}
+                    onCancel={() => setIsEditingMeal(false)}
+                    onSave={(values) => {
+                      void handleSaveMeal(values);
+                    }}
+                  />
+                ) : (
+                <>
                 {selectedNote ? (
                   <View style={styles.noteBlock}>
                     <Text style={styles.noteHeading}>{t('yourNote')}</Text>
@@ -989,6 +1149,12 @@ export default function HomeScreen() {
                   </>
                 ) : null}
 
+                <Text style={styles.calorieEstimate}>{t('estimate')}</Text>
+                <Pressable
+                  onPress={() => setIsEditingMeal(true)}
+                  style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}>
+                  <Text style={styles.secondaryButtonText}>{t('edit')}</Text>
+                </Pressable>
                 <Pressable
                   onPress={handleFixResults}
                   disabled={isProcessing}
@@ -1013,6 +1179,8 @@ export default function HomeScreen() {
                   style={({ pressed }) => [styles.deleteButton, pressed && styles.pressed]}>
                   <Text style={styles.deleteButtonText}>{t('deleteMeal')}</Text>
                 </Pressable>
+                </>
+                )}
               </View>
             </>
           ) : null}
@@ -1142,6 +1310,12 @@ const styles = StyleSheet.create({
     color: '#9A958C',
     fontSize: 15,
     marginTop: 4,
+  },
+  calorieEstimate: {
+    color: '#9A958C',
+    fontSize: 12,
+    marginTop: 2,
+    marginBottom: 10,
   },
   calorieRingIcon: {
     fontSize: 22,
@@ -1580,6 +1754,43 @@ const styles = StyleSheet.create({
   },
   deleteButtonText: {
     color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  loadErrorCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    marginBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    ...CARD_SHADOW,
+  },
+  loadErrorText: {
+    flex: 1,
+    color: '#9A958C',
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  loadErrorRetry: {
+    color: PANDAN,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  retryButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 15,
+    borderRadius: 999,
+    backgroundColor: '#F3EEE6',
+    marginTop: 16,
+    alignSelf: 'stretch',
+  },
+  retryButtonText: {
+    color: '#2C2A26',
     fontSize: 16,
     fontWeight: '600',
   },

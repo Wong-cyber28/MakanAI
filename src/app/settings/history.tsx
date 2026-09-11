@@ -176,6 +176,8 @@ export default function HistoryScreen() {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [monthData, setMonthData] = useState<HistoryBar[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
 
   const maxWeekOffset = Math.min(0, WEEK_DAYS - monthData.length);
 
@@ -202,6 +204,7 @@ export default function HistoryScreen() {
     useCallback(() => {
       let ignore = false;
       setIsLoading(true);
+      setLoadError(false);
 
       void fetchAndProcessHistoryData()
         .then((result) => {
@@ -209,12 +212,13 @@ export default function HistoryScreen() {
             return;
           }
           setMonthData(result.processedMonthData);
+          setLoadError(false);
           setIsLoading(false);
         })
         .catch((error) => {
           console.error('读取历史卡路里失败', error);
           if (!ignore) {
-            setMonthData([]);
+            setLoadError(true);
             setIsLoading(false);
           }
         });
@@ -222,7 +226,7 @@ export default function HistoryScreen() {
       return () => {
         ignore = true;
       };
-    }, [])
+    }, [retryKey])
   );
   const barWidth = viewMode === 'week' ? 20 : 6;
   const barSpacing = viewMode === 'week' ? 14 : 4;
@@ -344,6 +348,19 @@ export default function HistoryScreen() {
             <View style={styles.loadingBox}>
               <ActivityIndicator color={PANDAN} />
               <Text style={styles.loadingText}>{t('loadingHistory')}</Text>
+            </View>
+          ) : loadError ? (
+            <View style={styles.chartEmpty}>
+              <Text style={styles.chartEmptyText}>{t('couldntLoadHistory')}</Text>
+              <Pressable
+                onPress={() => {
+                  setIsLoading(true);
+                  setLoadError(false);
+                  setRetryKey((current) => current + 1);
+                }}
+                style={({ pressed }) => pressed && styles.pressed}>
+                <Text style={styles.retryText}>{t('retry')}</Text>
+              </Pressable>
             </View>
           ) : !hasChartData ? (
             <View style={styles.chartEmpty}>
@@ -628,5 +645,11 @@ const styles = StyleSheet.create({
   },
   pressed: {
     opacity: 0.72,
+  },
+  retryText: {
+    color: PANDAN,
+    fontSize: 16,
+    fontWeight: '600',
+    marginTop: 12,
   },
 });

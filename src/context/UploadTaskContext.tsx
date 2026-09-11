@@ -16,8 +16,40 @@ import type { MealIngredient, MealLog } from '../../types/supabase';
 import { SUPABASE_ANON_KEY, SUPABASE_URL, supabase } from '../lib/supabase';
 import { getCurrentUserId } from '@/lib/session-user';
 
-const ANALYZE_URL = 'https://efkkdohscemtjdxgmvtb.supabase.co/functions/v1/analyze-meal';
+const ANALYZE_URL = `${SUPABASE_URL.replace(/\/$/, '')}/functions/v1/analyze-meal`;
 const MEAL_IMAGES_BUCKET = 'meal_images';
+
+function mealImagePathFromUrl(imageUrl?: string | null): string | null {
+  if (typeof imageUrl !== 'string' || !imageUrl.trim()) {
+    return null;
+  }
+
+  try {
+    const url = new URL(imageUrl.trim());
+    const marker = `/object/public/${MEAL_IMAGES_BUCKET}/`;
+    const index = url.pathname.indexOf(marker);
+    if (index === -1) {
+      return null;
+    }
+
+    const path = decodeURIComponent(url.pathname.slice(index + marker.length));
+    return path.length > 0 ? path : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function removeMealImage(imageUrl?: string | null): Promise<void> {
+  const path = mealImagePathFromUrl(imageUrl);
+  if (!path) {
+    return;
+  }
+
+  const { error } = await supabase.storage.from(MEAL_IMAGES_BUCKET).remove([path]);
+  if (error) {
+    console.warn('删除餐食图片失败', error);
+  }
+}
 
 const GEMINI_OUTPUT_CONTRACT = `Output MUST be strictly valid JSON with these fields:
 - isFood (boolean)

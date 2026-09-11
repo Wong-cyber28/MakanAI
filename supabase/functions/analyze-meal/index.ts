@@ -6,6 +6,81 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+const MAX_BODY_BYTES = 12 * 1024 * 1024;
+const RATE_LIMIT_MAX = 30;
+const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
+const analyzeHitsByUser = new Map<string, number[]>();
+
+class PayloadTooLargeError extends Error {
+  constructor() {
+    super("Request body too large");
+    this.name = "PayloadTooLargeError";
+  }
+}
+
+function jsonResponse(body: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+function isRateLimited(userId: string) {
+  const now = Date.now();
+  const windowStart = now - RATE_LIMIT_WINDOW_MS;
+  const hits = (analyzeHitsByUser.get(userId) ?? []).filter((stamp) => stamp > windowStart);
+  if (hits.length >= RATE_LIMIT_MAX) {
+    analyzeHitsByUser.set(userId, hits);
+    return true;
+  }
+  hits.push(now);
+  analyzeHitsByUser.set(userId, hits);
+  return false;
+}
+
+async function readJsonBody(req: Request, maxBytes: number): Promise<unknown> {
+  const declared = Number(req.headers.get("content-length") ?? "0");
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    throw new PayloadTooLargeError();
+  }
+
+  const reader = req.body?.getReader();
+  if (!reader) {
+    throw new Error("Missing request body");
+  }
+
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    if (!value) {
+      continue;
+    }
+    received += value.byteLength;
+    if (received > maxBytes) {
+      try {
+        await reader.cancel();
+      } catch {
+        // Ignore cancel errors after rejecting an oversized body.
+      }
+      throw new PayloadTooLargeError();
+    }
+    chunks.push(value);
+  }
+
+  const merged = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return JSON.parse(new TextDecoder().decode(merged));
+}
+
 serve(async (req) => {
   // 处理预检请求 (CORS preflight)
   if (req.method === "OPTIONS") {
@@ -13,15 +88,17 @@ serve(async (req) => {
   }
 
   try {
+    const declaredLength = Number(req.headers.get("content-length") ?? "0");
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) {
+      return jsonResponse({ error: "Request body too large" }, 413);
+    }
+
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
     const authHeader = req.headers.get("Authorization") ?? "";
 
     if (!authHeader.toLowerCase().startsWith("bearer ")) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonResponse({ error: "Unauthorized" }, 401);
     }
 
     const userClient = createClient(supabaseUrl, anonKey, {
@@ -33,19 +110,21 @@ serve(async (req) => {
     } = await userClient.auth.getUser();
 
     if (userError || !user) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonResponse({ error: "Unauthorized" }, 401);
     }
 
-    const { imageBase64, userContext } = await req.json();
+    if (isRateLimited(user.id)) {
+      return jsonResponse({ error: "Too many meal analyses. Please try again later." }, 429);
+    }
 
-    if (!imageBase64) {
-      return new Response(
-        JSON.stringify({ error: "Missing imageBase64 in request body." }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    const payload = await readJsonBody(req, MAX_BODY_BYTES);
+    const { imageBase64, userContext } = (payload ?? {}) as {
+      imageBase64?: unknown;
+      userContext?: unknown;
+    };
+
+    if (typeof imageBase64 !== "string" || !imageBase64) {
+      return jsonResponse({ error: "Missing imageBase64 in request body." }, 400);
     }
 
     const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
@@ -95,9 +174,10 @@ Do not wrap the JSON in markdown. Do not include extra keys unless necessary.
     // 构造请求 Google Gemini 2.5 Flash API
     const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
-    const promptText = userContext
-      ? `${userContext}\n\nAnalyze this Malaysian food image strictly.`
-      : `Analyze this Malaysian food image strictly.`;
+    const promptText =
+      typeof userContext === "string" && userContext
+        ? `${userContext}\n\nAnalyze this Malaysian food image strictly.`
+        : `Analyze this Malaysian food image strictly.`;
 
     const requestBody = {
       contents: [
@@ -165,8 +245,14 @@ Do not wrap the JSON in markdown. Do not include extra keys unless necessary.
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (err) {
+    if (err instanceof PayloadTooLargeError) {
+      return jsonResponse({ error: "Request body too large" }, 413);
+    }
+    if (err instanceof SyntaxError) {
+      return jsonResponse({ error: "Invalid JSON body." }, 400);
+    }
     return new Response(
-      JSON.stringify({ error: err.message || "Internal Server Error" }),
+      JSON.stringify({ error: err instanceof Error ? err.message : "Internal Server Error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
